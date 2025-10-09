@@ -29,6 +29,7 @@ function computeATR(highs, lows, closes, period=ATR_PERIOD) {
   }
   return trs.length<period ? mean(trs) : mean(trs.slice(-period));
 }
+
 function computeRSI(closes, period=RSI_PERIOD){
   if (closes.length<=period) return 50;
   const deltas=closes.slice(1).map((c,i)=>c-closes[i]);
@@ -39,6 +40,7 @@ function computeRSI(closes, period=RSI_PERIOD){
   const rs=avgGain/avgLoss;
   return 100-(100/(1+rs));
 }
+
 function computeBollinger(closes, period=BB_PERIOD, mult=BB_STD){
   if (closes.length<period){
     const sma=mean(closes); const s=std(closes);
@@ -47,10 +49,15 @@ function computeBollinger(closes, period=BB_PERIOD, mult=BB_STD){
   const slice=closes.slice(-period); const sma=mean(slice); const s=std(slice);
   return {middle:sma,upper:sma+mult*s,lower:sma-mult*s,width:(2*mult*s)/(sma||1)};
 }
+
 function computeEMA(closes, period=EMA_PERIOD){
   if (closes.length<period) return mean(closes);
   const k=2/(period+1);
-  return closes.slice(-period).reduce((ema,price)=>ema+k*(price-ema));
+  let ema = closes[closes.length - period]; // valor inicial da EMA
+  for (let i = closes.length - period + 1; i < closes.length; i++) {
+    ema = ema + k * (closes[i] - ema);
+  }
+  return ema;
 }
 
 // candles com fallback
@@ -65,6 +72,8 @@ async function fetchKlines(symbol, interval='3m', limit=200){
       if (arr.length>=2){ return arr; }
     }
   }catch(e){ console.log(`⚠️ klines falhou ${symbol}: ${e.message}`); }
+
+  // fallback para trades
   try{
     const tResp=await axios.get("https://api.backpack.exchange/api/v1/trades",{params:{symbol,limit:limit*5}});
     const trades=tResp.data;
@@ -96,6 +105,7 @@ function decide({price,atrRel,rsi,bb,ema20,volLastCandle}){
 // histórico
 const historyMap={};
 
+// coleta de snapshots periódica
 async function takeSnapshot(){
   try{
     const oiResp=await axios.get("https://api.backpack.exchange/api/v1/openInterest");
@@ -127,19 +137,22 @@ async function takeSnapshot(){
       historyMap[item.symbol].push({...item,ts:Date.now()});
       if (historyMap[item.symbol].length>100) historyMap[item.symbol].shift();
     });
+    console.log(`📊 Snapshot atualizado: ${combined.length} ativos`);
   }catch(e){console.log("snapshot error",e.message);}
 }
 
+// inicializa coleta periódica a cada 30 segundos
+takeSnapshot(); // snapshot inicial
+setInterval(takeSnapshot, 30_000);
+
 // rota da API
-app.get("/api/data", async (req,res)=>{
-  if (Object.keys(historyMap).length === 0) {
-    console.log("⚡ Nenhum dado no cache — coletando snapshot inicial...");
-    await takeSnapshot();
-  }
+app.get("/api/data", (req,res)=>{
   const results=Object.values(historyMap)
     .map(arr=>arr[arr.length-1])
     .filter(Boolean)
     .sort((a,b)=>b.liqOI-a.liqOI);
+
+  console.log("Retornando", results.length, "ativos");
   res.json(results);
 });
 
