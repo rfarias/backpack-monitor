@@ -151,4 +151,5 @@ app.get("/api/data",(req,res)=>{
   res.json(results);
 });
 
-app.listen(PORT,()=>console.log(`Server http://localhost:${PORT}`));
+module.exports = app;
+
