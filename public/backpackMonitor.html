@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Backpack Monitor</title>
+  <style>
+    body{background:#111;color:#eee;font-family:Arial;padding:20px;line-height:1.5;}
+    table{width:100%;border-collapse:collapse;margin-top:10px;}
+    th,td{padding:6px;border:1px solid #333;text-align:center;cursor:pointer;}
+    th{background:#222;position:relative;}
+    th:hover{background:#333;}
+    .green{background:#133d1d;color:#6f6;}   /* Long */
+    .red{background:#3d1313;color:#f99;}     /* Short */
+    .blue{background:#13213d;color:#6cf;}   /* Lateral */
+    .gray{background:#2a2a2a;color:#ccc;}   /* Neutral */
+    .filters {margin:15px 0;}
+    .filters button {
+      margin-right:6px;
+      padding:6px 12px;
+      border:none;
+      border-radius:5px;
+      cursor:pointer;
+      font-weight:bold;
+    }
+    .filters button.active {background:#555;color:#fff;}
+    /* RSI cores */
+    .rsi-low { color:#6f6; font-weight:bold; }
+    .rsi-high { color:#f66; font-weight:bold; }
+    .rsi-mid { color:#ccc; }
+    /* ATR cores */
+    .atr-low { color:#6f6; font-weight:bold; }
+    .atr-mid { color:#ff6; font-weight:bold; }
+    .atr-high { color:#f66; font-weight:bold; }
+    /* Tooltip */
+    th[title] { cursor: help; }
+    .info-box {
+      background:#1a1a1a;
+      border:1px solid #333;
+      padding:12px;
+      margin-bottom:15px;
+      border-radius:6px;
+      font-size:14px;
+      color:#ccc;
+    }
+    .info-box strong { color:#fff; }
+    /* Animação de alerta */
+    @keyframes flash {
+      0% { background-color: #ffae00; }
+      50% { background-color: #111; }
+      100% { background-color: #ffae00; }
+    }
+    .flash {
+      animation: flash 1s linear infinite;
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 Backpack Monitor</h1>
+  <div class="info-box">
+    <p><strong>Timeframe:</strong> Indicadores calculados no gráfico de <strong>3 minutos</strong> (se não houver dados suficientes, usa-se <strong>5 minutos</strong>).</p>
+    <p><strong>Como interpretar:</strong></p>
+    <ul>
+      <li><strong>ATR%</strong>: mede volatilidade. 
+        <span style="color:#6f6">Verde = ≤0.3%</span>, 
+        <span style="color:#ff6">Amarelo = 0.3–0.7%</span>, 
+        <span style="color:#f66">Vermelho = ≥0.7%</span>.
+      </li>
+      <li><strong>RSI</strong>: mede força do mercado. Verde = sobrevendido (≤30), Vermelho = sobrecomprado (≥70).</li>
+      <li><strong>BB Width</strong>: largura das Bandas de Bollinger. Valores baixos = mercado consolidando, altos = expansão/tendência.</li>
+      <li><strong>Decisão</strong>: 
+        <span style="color:#6f6">VERDE = Long</span>, 
+        <span style="color:#f99">VERMELHO = Short</span>, 
+        <span style="color:#6cf">AZUL = Lateral</span>, 
+        <span style="color:#ccc">CINZA = Neutro</span>.
+      </li>
+    </ul>
+    <p><strong>Recomendação:</strong> Abrir posições apenas em mercados com <u>ATR% baixo</u>, <u>liquidez alta</u> e <u>RSI extremo</u>. Se algum ativo virar <strong>Neutro</strong>, feche a posição imediatamente.</p>
+  </div>
+
+  <div class="filters">
+    <button onclick="setFilter('all')" id="btn-all" class="active">Todos</button>
+    <button onclick="setFilter('long')" id="btn-long">Só Long</button>
+    <button onclick="setFilter('short')" id="btn-short">Só Short</button>
+    <button onclick="setFilter('lateral')" id="btn-lateral">Só Lateral</button>
+    <button onclick="setFilter('neutral')" id="btn-neutral">Só Neutro</button>
+    <button onclick="toggleLiquidity()" id="btn-liq">Ocultar sem liquidez</button>
+    <button onclick="toggleNeutros()" id="btn-neutro">Ocultar neutros</button>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th data-key="symbol">Symbol</th>
+        <th data-key="lastPrice">Price</th>
+        <th data-key="atrRel" title="ATR% mede volatilidade: verde ≤0.3%, amarelo 0.3–0.7%, vermelho ≥0.7%">ATR%</th>
+        <th data-key="bbWidth" title="BB Width (Bandas de Bollinger): largura relativa das bandas. Baixo = consolidação, alto = expansão.">BB Width</th>
+        <th data-key="rsi" title="RSI: força do mercado. Verde ≤30 (sobrevendido), Vermelho ≥70 (sobrecomprado)">RSI</th>
+        <th data-key="volumeUSD">Liq</th>
+        <th data-key="oiUSD">OI</th>
+        <th data-key="liqOI">Liq/OI</th>
+        <th data-key="score">Score</th>
+        <th data-key="decision">Decisão</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+let currentFilter = "all";
+let hideNoLiquidity = false;
+let hideNeutros = false;
+let sortKey = "score";
+let sortDir = "desc";
+let previousStates = {}; // guarda decisões anteriores
+
+function setFilter(f){
+  currentFilter = f;
+  document.querySelectorAll(".filters button").forEach(btn=>btn.classList.remove("active"));
+  document.getElementById("btn-"+f).classList.add("active");
+  load();
+}
+
+function toggleLiquidity(){
+  hideNoLiquidity = !hideNoLiquidity;
+  const btn = document.getElementById("btn-liq");
+  btn.classList.toggle("active", hideNoLiquidity);
+  btn.textContent = hideNoLiquidity ? "Mostrar sem liquidez" : "Ocultar sem liquidez";
+  load();
+}
+
+function toggleNeutros(){
+  hideNeutros = !hideNeutros;
+  const btn = document.getElementById("btn-neutro");
+  btn.classList.toggle("active", hideNeutros);
+  btn.textContent = hideNeutros ? "Mostrar neutros" : "Ocultar neutros";
+  load();
+}
+
+// formatadores
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+function rsiClass(rsi){ if (rsi <= 30) return "rsi-low"; if (rsi >= 70) return "rsi-high"; return "rsi-mid"; }
+function atrClass(atrRel){
+  const atrPct = atrRel * 100;
+  if (atrPct <= 0.3) return "atr-low";
+  if (atrPct >= 0.7) return "atr-high";
+  return "atr-mid";
+}
+
+async function load(){
+  const resp = await fetch("/api/data");
+  let data = await resp.json();
+
+  if (currentFilter !== "all") {
+    data = data.filter(m => m.decision === currentFilter);
+  }
+  if (hideNoLiquidity) {
+    data = data.filter(m => m.volumeUSD > 0);
+  }
+  if (hideNeutros) {
+    data = data.filter(m => m.decision !== "neutral");
+  }
+
+  data.sort((a,b)=>{
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === "string") { va = va.toUpperCase(); vb = vb.toUpperCase(); }
+    if (va < vb) return sortDir === "asc" ? -1 : 1;
+    if (va > vb) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const tb=document.querySelector("#tbl tbody");
+  tb.innerHTML="";
+  data.forEach((m,i)=>{
+    const tr=document.createElement("tr");
+    if (m.decision==="long") tr.className="green";
+    else if (m.decision==="short") tr.className="red";
+    else if (m.decision==="lateral") tr.className="blue";
+    else tr.className="gray"; // neutral
+
+    // detectar mudança para neutro
+    if (previousStates[m.symbol] && previousStates[m.symbol] !== "neutral" && m.decision === "neutral") {
+      tr.classList.add("flash");
+      setTimeout(()=>tr.classList.remove("flash"), 30000); // pisca até próxima atualização
+    }
+    previousStates[m.symbol] = m.decision;
+
+    tr.innerHTML=`
+      <td>${i+1}</td>
+      <td>${m.symbol}</td>
+      <td>${usdFmt.format(m.lastPrice)}</td>
+      <td class="${atrClass(m.atrRel)}">${(m.atrRel*100).toFixed(3)}%</td>
+      <td>${m.bbWidth.toFixed(4)}</td>
+      <td class="${rsiClass(m.rsi)}">${m.rsi.toFixed(1)}</td>
+      <td>${usdFmt.format(m.volumeUSD)}</td>
+      <td>${usdFmt.format(m.oiUSD)}</td>
+      <td>${m.liqOI.toFixed(4)}</td>
+      <td>${m.score}</td>
+      <td>${m.decision.toUpperCase()}</td>
+    `;
+    tb.appendChild(tr);
+  });
+}
+
+document.querySelectorAll("th[data-key]").forEach(th=>{
+  th.addEventListener("click",()=>{
+    const key = th.getAttribute("data-key");
+    if (sortKey === key) {
+      sortDir = sortDir === "asc" ? "desc" : "asc";
+    } else {
+      sortKey = key;
+      sortDir = "desc";
+    }
+    load();
+  });
+});
+
+load();
+setInterval(load,30000);
+</script>
+</body>
+</html>
