@@ -6,17 +6,15 @@ const app = express();
 app.use(cors());
 app.use(express.static(__dirname));
 
-const PORT = 3000;
-
 // parâmetros ajustados
 const ATR_PERIOD = 14;
-const RSI_PERIOD = 9;              // mais sensível
+const RSI_PERIOD = 9;
 const BB_PERIOD = 20;
 const BB_STD = 2;
-const EMA_PERIOD = 20;             // EMA para direção
-const SAFE_ATR_THRESHOLD = 0.01;   // ATR% máximo para lateral seguro
-const BB_WIDTH_THRESHOLD = 0.01;   // BB Width máximo para consolidação
-const MIN_CANDLE_VOL_USD = 100000; // volume mínimo por candle
+const EMA_PERIOD = 20;
+const SAFE_ATR_THRESHOLD = 0.01;
+const BB_WIDTH_THRESHOLD = 0.01;
+const MIN_CANDLE_VOL_USD = 100000;
 
 // helpers
 function mean(arr) { return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
@@ -64,10 +62,9 @@ async function fetchKlines(symbol, interval='3m', limit=200){
     const resp=await axios.get("https://api.backpack.exchange/api/v1/klines",{params:{symbol,interval,startTime:startSec,endTime:nowSec}});
     if (resp.status===200 && Array.isArray(resp.data) && resp.data.length>0){
       const arr=resp.data.map(c=>({open:+c.open,high:+c.high,low:+c.low,close:+c.close,volume:+c.volume,ts:+c.openTime}));
-      if (arr.length>=2){ console.log(`✅ klines ${symbol} ${arr.length}`); return arr; }
+      if (arr.length>=2){ return arr; }
     }
   }catch(e){ console.log(`⚠️ klines falhou ${symbol}: ${e.message}`); }
-  // fallback: trades
   try{
     const tResp=await axios.get("https://api.backpack.exchange/api/v1/trades",{params:{symbol,limit:limit*5}});
     const trades=tResp.data;
@@ -82,7 +79,6 @@ async function fetchKlines(symbol, interval='3m', limit=200){
       b.high=Math.max(b.high,p); b.low=Math.min(b.low,p); b.close=p; b.volume+=q*p;
     });
     const candles=Object.values(buckets).filter(b=>b.open!==null).sort((a,b)=>a.ts-b.ts);
-    console.log(`🟡 fallback trades ${symbol} ${candles.length}`);
     return candles;
   }catch(e){console.log(`❌ trades falhou ${symbol}: ${e.message}`); return [];}
 }
@@ -99,10 +95,8 @@ function decide({price,atrRel,rsi,bb,ema20,volLastCandle}){
 
 // histórico
 const historyMap={};
-let isFetching=false;
 
 async function takeSnapshot(){
-  if (isFetching) return; isFetching=true;
   try{
     const oiResp=await axios.get("https://api.backpack.exchange/api/v1/openInterest");
     const perp=oiResp.data.filter(m=>m.symbol.endsWith("_PERP"));
@@ -125,7 +119,6 @@ async function takeSnapshot(){
         const volumeUSD=(+ticker.volume||0)*lastPrice;
         const liqOI=oiUSD?volumeUSD/oiUSD:0;
         const {decision,score}=decide({price:lastPrice,atrRel,rsi,bb,ema20,volLastCandle});
-        console.log(m.symbol,"ATR%",(atrRel*100).toFixed(2),"RSI",rsi.toFixed(1),"BBw",bb.width.toFixed(4),"EMA20",ema20.toFixed(2),"volLast",volLastCandle.toFixed(0),"→",decision,"score",score);
         combined.push({symbol:m.symbol,lastPrice,atrRel,rsi,bbWidth:bb.width,ema20,volumeUSD,oiUSD,liqOI,decision,score});
       }catch(e){console.log("erro",m.symbol,e.message);}
     }
@@ -135,21 +128,20 @@ async function takeSnapshot(){
       if (historyMap[item.symbol].length>100) historyMap[item.symbol].shift();
     });
   }catch(e){console.log("snapshot error",e.message);}
-  isFetching=false;
 }
 
-takeSnapshot();
-setInterval(takeSnapshot,30*1000);
-
-app.get("/api/data",(req,res)=>{
-  const results=[];
-  for (const sym of Object.keys(historyMap)){
-    const arr=historyMap[sym]; if (!arr.length) continue;
-    results.push(arr[arr.length-1]);
+// rota da API
+app.get("/api/data", async (req,res)=>{
+  if (Object.keys(historyMap).length === 0) {
+    console.log("⚡ Nenhum dado no cache — coletando snapshot inicial...");
+    await takeSnapshot();
   }
-  results.sort((a,b)=>b.liqOI-a.liqOI);
+  const results=Object.values(historyMap)
+    .map(arr=>arr[arr.length-1])
+    .filter(Boolean)
+    .sort((a,b)=>b.liqOI-a.liqOI);
   res.json(results);
 });
 
+// exportar para Vercel
 module.exports = app;
-
