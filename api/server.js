@@ -130,6 +130,7 @@ function decide({ price, atrRel, rsi, bb, ema20, volLastCandle }) {
 }
 
 // ==== Snapshot ====
+// ==== Snapshot (inclui mercados futuros sem preço) ====
 async function takeSnapshot() {
   try {
     const oiResp = await axios.get("https://api.backpack.exchange/api/v1/openInterest");
@@ -142,32 +143,43 @@ async function takeSnapshot() {
           const ticker = Array.isArray(tResp.data) ? tResp.data[0] : tResp.data;
           const lastPrice = +ticker.lastPrice || 0;
 
-          // buscar candles
-          let kl = await fetchKlines(m.symbol, "3m", CANDLE_LIMIT);
-          if (kl.length < 20) kl = await fetchKlines(m.symbol, "5m", CANDLE_LIMIT);
-          if (kl.length < 10) return null; // sem dados suficientes
+          let atrRel = null, rsi = null, bbWidth = null, ema20 = null, decision = "aguardando", score = 0;
+          let volumeUSD = 0, oiUSD = 0, liqOI = 0;
 
-          const closes = kl.map(k => k.close);
-          const highs = kl.map(k => k.high);
-          const lows = kl.map(k => k.low);
+          // sempre mostra o mercado, mesmo se ainda não tiver candles
+          if (lastPrice > 0) {
+            let kl = await fetchKlines(m.symbol, "3m", CANDLE_LIMIT);
+            if (kl.length < 20) kl = await fetchKlines(m.symbol, "5m", CANDLE_LIMIT);
 
-          const atr = computeATR(highs, lows, closes);
-          const atrRel = lastPrice ? atr / lastPrice : 0;
-          const rsi = computeRSI(closes);
-          const bb = computeBollinger(closes);
-          const ema20 = computeEMA(closes);
-          const volLastCandle = kl[kl.length - 1].volume * lastPrice;
-          const oiUSD = (+m.openInterest || 0) * lastPrice;
-          const volumeUSD = (+ticker.volume || 0) * lastPrice;
-          const liqOI = oiUSD ? volumeUSD / oiUSD : 0;
-          const { decision, score } = decide({ price: lastPrice, atrRel, rsi, bb, ema20, volLastCandle });
+            if (kl.length >= 10) {
+              const closes = kl.map(k => k.close);
+              const highs = kl.map(k => k.high);
+              const lows = kl.map(k => k.low);
+
+              const atr = computeATR(highs, lows, closes);
+              atrRel = lastPrice ? atr / lastPrice : 0;
+              rsi = computeRSI(closes);
+              const bb = computeBollinger(closes);
+              bbWidth = bb.width;
+              ema20 = computeEMA(closes);
+              const volLastCandle = kl[kl.length - 1].volume * lastPrice;
+
+              oiUSD = (+m.openInterest || 0) * lastPrice;
+              volumeUSD = (+ticker.volume || 0) * lastPrice;
+              liqOI = oiUSD ? volumeUSD / oiUSD : 0;
+
+              const decisionObj = decide({ price: lastPrice, atrRel, rsi, bb, ema20, volLastCandle });
+              decision = decisionObj.decision;
+              score = decisionObj.score;
+            }
+          }
 
           return {
             symbol: m.symbol,
             lastPrice,
             atrRel,
             rsi,
-            bbWidth: bb.width,
+            bbWidth,
             ema20,
             volumeUSD,
             oiUSD,
@@ -177,17 +189,31 @@ async function takeSnapshot() {
           };
         } catch (err) {
           console.log("Erro em", m.symbol, err.message);
-          return null;
+          return {
+            symbol: m.symbol,
+            lastPrice: 0,
+            atrRel: null,
+            rsi: null,
+            bbWidth: null,
+            ema20: null,
+            volumeUSD: 0,
+            oiUSD: 0,
+            liqOI: 0,
+            decision: "aguardando",
+            score: 0,
+          };
         }
       })
     );
 
-    return results.filter(Boolean).sort((a, b) => b.liqOI - a.liqOI);
+    // não filtramos mais os que não têm preço
+    return results.sort((a, b) => (b.oiUSD || 0) - (a.oiUSD || 0));
   } catch (e) {
     console.log("Snapshot error:", e.message);
     return [];
   }
 }
+
 
 // ==== Rota API ====
 app.get("/api/data", async (req, res) => {
