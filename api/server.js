@@ -15,7 +15,7 @@ const EMA_PERIOD = 20;
 const SAFE_ATR_THRESHOLD = 0.01;
 const BB_WIDTH_THRESHOLD = 0.01;
 const MIN_CANDLE_VOL_USD = 100000;
-const MAX_CANDLES = 500; // histórico máximo por símbolo
+const MAX_CANDLES = 100; // histórico máximo necessário
 
 // helpers
 function mean(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
@@ -59,39 +59,6 @@ function computeEMA(closes,period=EMA_PERIOD){
   return ema;
 }
 
-// fetch candles com fallback
-async function fetchKlines(symbol, interval='3m', limit=200){
-  const intervalSec=interval==='3m'?180:interval==='5m'?300:60;
-  try{
-    const nowSec=Math.floor(Date.now()/1000);
-    const startSec=nowSec-limit*intervalSec;
-    const resp=await axios.get("https://api.backpack.exchange/api/v1/klines",{params:{symbol,interval,startTime:startSec,endTime:nowSec}});
-    if(resp.status===200 && Array.isArray(resp.data) && resp.data.length>0){
-      return resp.data.map(c=>({open:+c.open,high:+c.high,low:+c.low,close:+c.close,volume:+c.volume,ts:+c.openTime}));
-    }
-  }catch(e){ console.log(`⚠️ klines falharam ${symbol}: ${e.message}`); }
-
-  // fallback trades
-  try{
-    const tResp=await axios.get("https://api.backpack.exchange/api/v1/trades",{params:{symbol,limit:limit*5}});
-    const trades=tResp.data;
-    const buckets={};
-    trades.forEach(tr=>{
-      const ts=Math.floor(tr.timestamp/1000);
-      const bucket=Math.floor(ts/intervalSec)*intervalSec;
-      const p=+tr.price,q=+tr.quantity;
-      if(!buckets[bucket]) buckets[bucket]={open:null,high:-Infinity,low:Infinity,close:null,volume:0,ts:bucket};
-      const b=buckets[bucket];
-      if(b.open===null) b.open=p;
-      b.high=Math.max(b.high,p);
-      b.low=Math.min(b.low,p);
-      b.close=p;
-      b.volume+=q*p;
-    });
-    return Object.values(buckets).filter(b=>b.open!==null).sort((a,b)=>a.ts-b.ts);
-  }catch(e){ console.log(`❌ trades falharam ${symbol}: ${e.message}`); return [];}
-}
-
 // decisão
 function decide({price,atrRel,rsi,bb,ema20,volLastCandle}){
   if(atrRel<SAFE_ATR_THRESHOLD && bb.width<=BB_WIDTH_THRESHOLD && volLastCandle>=MIN_CANDLE_VOL_USD){
@@ -105,51 +72,82 @@ function decide({price,atrRel,rsi,bb,ema20,volLastCandle}){
 // histórico de candles por símbolo
 const candleHistory = {};
 
-// rota da API: atualiza histórico e retorna dados
+// busca apenas candles novos
+async function fetchNewKlines(symbol, interval='3m', limit=MAX_CANDLES, lastTs=null){
+  const intervalSec = interval==='3m'?180:interval==='5m'?300:60;
+  const nowSec = Math.floor(Date.now()/1000);
+  const startSec = lastTs ? lastTs+intervalSec : nowSec-limit*intervalSec;
+
+  try{
+    const resp = await axios.get("https://api.backpack.exchange/api/v1/klines", {params:{symbol,interval,startTime:startSec,endTime:nowSec}});
+    if(resp.status===200 && Array.isArray(resp.data) && resp.data.length>0){
+      return resp.data.map(c=>({open:+c.open,high:+c.high,low:+c.low,close:+c.close,volume:+c.volume,ts:+c.openTime}));
+    }
+  }catch(e){ console.log(`⚠️ klines falharam ${symbol}: ${e.message}`); }
+
+  // fallback trades
+  try{
+    const tResp = await axios.get("https://api.backpack.exchange/api/v1/trades",{params:{symbol,limit:limit*5}});
+    const trades = tResp.data;
+    const buckets = {};
+    trades.forEach(tr=>{
+      const ts = Math.floor(tr.timestamp/1000);
+      const bucket = Math.floor(ts/intervalSec)*intervalSec;
+      const p = +tr.price, q = +tr.quantity;
+      if(!buckets[bucket]) buckets[bucket] = {open:null,high:-Infinity,low:Infinity,close:null,volume:0,ts:bucket};
+      const b = buckets[bucket];
+      if(b.open===null) b.open=p;
+      b.high = Math.max(b.high,p);
+      b.low = Math.min(b.low,p);
+      b.close = p;
+      b.volume += q*p;
+    });
+    return Object.values(buckets).filter(b=>b.open!==null).sort((a,b)=>a.ts-b.ts);
+  }catch(e){ console.log(`❌ trades falharam ${symbol}: ${e.message}`); return [];}
+}
+
+// rota da API: atualiza histórico incrementalmente
 app.get("/api/data", async (req,res)=>{
   try{
     const oiResp = await axios.get("https://api.backpack.exchange/api/v1/openInterest");
     const perp = oiResp.data.filter(m=>m.symbol.endsWith("_PERP"));
-    const combined = [];
 
-    for(const m of perp){
+    const promises = perp.map(async m=>{
       try{
-        const tResp=await axios.get("https://api.backpack.exchange/api/v1/ticker",{params:{symbol:m.symbol}});
-        const ticker=Array.isArray(tResp.data)?tResp.data[0]:tResp.data;
+        const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker",{params:{symbol:m.symbol}});
+        const ticker = Array.isArray(tResp.data)?tResp.data[0]:tResp.data;
         const lastPrice = +ticker.lastPrice||0;
 
-        // histórico: pega os candles antigos e adiciona novos
-        if(!candleHistory[m.symbol]) candleHistory[m.symbol]=[];
-        let kl = await fetchKlines(m.symbol,"3m",200);
-        if(kl.length<10) kl = await fetchKlines(m.symbol,"5m",200);
+        if(!candleHistory[m.symbol]) candleHistory[m.symbol] = [];
+        const lastTs = candleHistory[m.symbol].length ? candleHistory[m.symbol][candleHistory[m.symbol].length-1].ts/1000 : null;
 
-        // mescla com histórico anterior (mantendo últimos MAX_CANDLES)
-        const existing = candleHistory[m.symbol];
-        const merged = [...existing, ...kl];
-        // remove duplicados por timestamp
+        const newCandles = await fetchNewKlines(m.symbol,"3m",MAX_CANDLES,lastTs);
+        const merged = [...candleHistory[m.symbol], ...newCandles];
+        // remove duplicados e mantém apenas MAX_CANDLES
         const unique = Array.from(new Map(merged.map(c=>[c.ts,c])).values());
         candleHistory[m.symbol] = unique.slice(-MAX_CANDLES);
 
         const closes = candleHistory[m.symbol].map(c=>c.close);
         const highs = candleHistory[m.symbol].map(c=>c.high);
         const lows = candleHistory[m.symbol].map(c=>c.low);
+
         const atr = computeATR(highs,lows,closes);
-        const atrRel = lastPrice?atr/lastPrice:0;
+        const atrRel = lastPrice ? atr/lastPrice : 0;
         const rsi = computeRSI(closes);
         const bb = computeBollinger(closes);
         const ema20 = computeEMA(closes);
-        const volLastCandle = candleHistory[m.symbol].length?candleHistory[m.symbol][candleHistory[m.symbol].length-1].volume*lastPrice:0;
+        const volLastCandle = candleHistory[m.symbol].length ? candleHistory[m.symbol][candleHistory[m.symbol].length-1].volume*lastPrice : 0;
         const oiUSD = (+m.openInterest||0)*lastPrice;
         const volumeUSD = (+ticker.volume||0)*lastPrice;
-        const liqOI = oiUSD?volumeUSD/oiUSD:0;
+        const liqOI = oiUSD ? volumeUSD/oiUSD : 0;
 
         const {decision,score} = decide({price:lastPrice,atrRel,rsi,bb,ema20,volLastCandle});
-        combined.push({symbol:m.symbol,lastPrice,atrRel,rsi,bbWidth:bb.width,ema20,volumeUSD,oiUSD,liqOI,decision,score});
-      }catch(e){ console.log("erro ticker",m.symbol,e.message);}
-    }
+        return {symbol:m.symbol,lastPrice,atrRel,rsi,bbWidth:bb.width,ema20,volumeUSD,oiUSD,liqOI,decision,score};
+      }catch(e){ console.log("erro ticker",m.symbol,e.message); return null; }
+    });
 
-    combined.sort((a,b)=>b.liqOI-a.liqOI);
-    res.json(combined);
+    const results = (await Promise.all(promises)).filter(Boolean).sort((a,b)=>b.liqOI-a.liqOI);
+    res.json(results);
   }catch(e){ console.log("erro openInterest",e.message); res.json([]);}
 });
 
