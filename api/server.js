@@ -133,20 +133,30 @@ function decide({ price, atrRel, rsi, bb, ema20, volLastCandle }) {
 // ==== Snapshot (inclui mercados futuros sem preço) ====
 async function takeSnapshot() {
   try {
+    // pega todos os mercados (inclusive ainda não listados)
+    const marketsResp = await axios.get("https://api.backpack.exchange/api/v1/markets");
+    const allPerp = marketsResp.data.filter(m => m.symbol.endsWith("_PERP"));
+
+    // pega open interest (pode estar vazio para mercados futuros)
     const oiResp = await axios.get("https://api.backpack.exchange/api/v1/openInterest");
-    const perp = oiResp.data.filter(m => m.symbol.endsWith("_PERP"));
+    const oiMap = {};
+    oiResp.data.forEach(o => {
+      oiMap[o.symbol] = o;
+    });
 
     const results = await Promise.all(
-      perp.map(async (m) => {
+      allPerp.map(async (m) => {
+        const oiData = oiMap[m.symbol] || {};
         try {
-          const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker", { params: { symbol: m.symbol } });
+          const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker", {
+            params: { symbol: m.symbol },
+          });
           const ticker = Array.isArray(tResp.data) ? tResp.data[0] : tResp.data;
           const lastPrice = +ticker.lastPrice || 0;
 
           let atrRel = null, rsi = null, bbWidth = null, ema20 = null, decision = "aguardando", score = 0;
           let volumeUSD = 0, oiUSD = 0, liqOI = 0;
 
-          // sempre mostra o mercado, mesmo se ainda não tiver candles
           if (lastPrice > 0) {
             let kl = await fetchKlines(m.symbol, "3m", CANDLE_LIMIT);
             if (kl.length < 20) kl = await fetchKlines(m.symbol, "5m", CANDLE_LIMIT);
@@ -164,7 +174,7 @@ async function takeSnapshot() {
               ema20 = computeEMA(closes);
               const volLastCandle = kl[kl.length - 1].volume * lastPrice;
 
-              oiUSD = (+m.openInterest || 0) * lastPrice;
+              oiUSD = (+oiData.openInterest || 0) * lastPrice;
               volumeUSD = (+ticker.volume || 0) * lastPrice;
               liqOI = oiUSD ? volumeUSD / oiUSD : 0;
 
@@ -186,6 +196,7 @@ async function takeSnapshot() {
             liqOI,
             decision,
             score,
+            status: lastPrice > 0 ? "ativo" : "aguardando",
           };
         } catch (err) {
           console.log("Erro em", m.symbol, err.message);
@@ -201,19 +212,19 @@ async function takeSnapshot() {
             liqOI: 0,
             decision: "aguardando",
             score: 0,
+            status: "aguardando",
           };
         }
       })
     );
 
-    // não filtramos mais os que não têm preço
+    // mostra todos os mercados (ativos e futuros)
     return results.sort((a, b) => (b.oiUSD || 0) - (a.oiUSD || 0));
   } catch (e) {
     console.log("Snapshot error:", e.message);
     return [];
   }
 }
-
 
 // ==== Rota API ====
 app.get("/api/data", async (req, res) => {
