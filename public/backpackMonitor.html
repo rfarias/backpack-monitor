@@ -13,7 +13,6 @@
     .red{background:#3d1313;color:#f99;}     /* Short */
     .blue{background:#13213d;color:#6cf;}   /* Lateral */
     .gray{background:#2a2a2a;color:#ccc;}   /* Neutral */
-    .aguardando{background:#1e1e1e;color:#777;font-style:italic;} /* Ainda não listado */
     .filters {margin:15px 0;}
     .filters button {
       margin-right:6px;
@@ -58,10 +57,24 @@
 <body>
   <h1>📊 Backpack Monitor</h1>
   <div class="info-box">
-    <p><strong>Timeframe:</strong> Indicadores calculados no gráfico de <strong>3 minutos</strong> (fallback 5m).</p>
-    <p><strong>ATR%</strong>: mede volatilidade — verde ≤0.3%, amarelo 0.3–0.7%, vermelho ≥0.7%</p>
-    <p><strong>RSI</strong>: força do mercado — verde ≤30, vermelho ≥70.</p>
-    <p><strong>Decisão:</strong> verde = Long, vermelho = Short, azul = Lateral, cinza = Neutro, cinza-escuro = Aguardando listagem.</p>
+    <p><strong>Timeframe:</strong> Indicadores calculados no gráfico de <strong>3 minutos</strong> (se não houver dados suficientes, usa-se <strong>5 minutos</strong>).</p>
+    <p><strong>Como interpretar:</strong></p>
+    <ul>
+      <li><strong>ATR%</strong>: mede volatilidade. 
+        <span style="color:#6f6">Verde = ≤0.3%</span>, 
+        <span style="color:#ff6">Amarelo = 0.3–0.7%</span>, 
+        <span style="color:#f66">Vermelho = ≥0.7%</span>.
+      </li>
+      <li><strong>RSI</strong>: mede força do mercado. Verde = sobrevendido (≤30), Vermelho = sobrecomprado (≥70).</li>
+      <li><strong>BB Width</strong>: largura das Bandas de Bollinger. Valores baixos = mercado consolidando, altos = expansão/tendência.</li>
+      <li><strong>Decisão</strong>: 
+        <span style="color:#6f6">VERDE = Long</span>, 
+        <span style="color:#f99">VERMELHO = Short</span>, 
+        <span style="color:#6cf">AZUL = Lateral</span>, 
+        <span style="color:#ccc">CINZA = Neutro</span>.
+      </li>
+    </ul>
+    <p><strong>Recomendação:</strong> Abrir posições apenas em mercados com <u>ATR% baixo</u>, <u>liquidez alta</u> e <u>RSI extremo</u>. Se algum ativo virar <strong>Neutro</strong>, feche a posição imediatamente.</p>
   </div>
 
   <div class="filters">
@@ -70,7 +83,6 @@
     <button onclick="setFilter('short')" id="btn-short">Só Short</button>
     <button onclick="setFilter('lateral')" id="btn-lateral">Só Lateral</button>
     <button onclick="setFilter('neutral')" id="btn-neutral">Só Neutro</button>
-    <button onclick="setFilter('aguardando')" id="btn-aguardando">Só Aguardando</button>
     <button onclick="toggleLiquidity()" id="btn-liq">Ocultar sem liquidez</button>
     <button onclick="toggleNeutros()" id="btn-neutro">Ocultar neutros</button>
   </div>
@@ -79,16 +91,16 @@
     <thead>
       <tr>
         <th>#</th>
-        <th data-key="symbol">Symbol</th>
-        <th data-key="lastPrice">Price</th>
-        <th data-key="atrRel">ATR%</th>
-        <th data-key="bbWidth">BB Width</th>
-        <th data-key="rsi">RSI</th>
-        <th data-key="volumeUSD">Liq</th>
-        <th data-key="oiUSD">OI</th>
-        <th data-key="liqOI">Liq/OI</th>
-        <th data-key="score">Score</th>
-        <th data-key="decision">Decisão</th>
+        <th data-key="symbol" title="Nome do par de negociação">Symbol</th>
+        <th data-key="lastPrice" title="Último preço de negociação">Price</th>
+        <th data-key="atrRel" title="ATR% mede volatilidade: verde ≤0.3%, amarelo 0.3–0.7%, vermelho ≥0.7%">ATR%</th>
+        <th data-key="bbWidth" title="BB Width (Bandas de Bollinger): largura relativa das bandas. Baixo = consolidação, alto = expansão.">BB Width</th>
+        <th data-key="rsi" title="RSI: força do mercado. Verde ≤30 (sobrevendido), Vermelho ≥70 (sobrecomprado)">RSI</th>
+        <th data-key="volumeUSD" title="Volume em USD (liquidez do mercado)">Liq</th>
+        <th data-key="oiUSD" title="Open Interest em USD (contratos abertos)">OI</th>
+        <th data-key="liqOI" title="Relação entre Liquidez e Open Interest">Liq/OI</th>
+        <th data-key="score" title="Pontuação geral com base nos indicadores">Score</th>
+        <th data-key="decision" title="Decisão calculada automaticamente">Decisão</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -105,8 +117,7 @@ let previousStates = {};
 function setFilter(f){
   currentFilter = f;
   document.querySelectorAll(".filters button").forEach(btn=>btn.classList.remove("active"));
-  const el = document.getElementById("btn-"+f);
-  if (el) el.classList.add("active");
+  document.getElementById("btn-"+f).classList.add("active");
   load();
 }
 
@@ -126,77 +137,77 @@ function toggleNeutros(){
   load();
 }
 
-const usdFmt = new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"});
-function rsiClass(rsi){if(rsi<=30)return"rsi-low";if(rsi>=70)return"rsi-high";return"rsi-mid";}
-function atrClass(atrRel){const p=atrRel*100;if(p<=0.3)return"atr-low";if(p>=0.7)return"atr-high";return"atr-mid";}
+// formatadores
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+function rsiClass(rsi){ if (rsi <= 30) return "rsi-low"; if (rsi >= 70) return "rsi-high"; return "rsi-mid"; }
+function atrClass(atrRel){
+  const atrPct = atrRel * 100;
+  if (atrPct <= 0.3) return "atr-low";
+  if (atrPct >= 0.7) return "atr-high";
+  return "atr-mid";
+}
 
 async function load(){
-  try {
-    const resp = await fetch("/api/data");
-    let data = await resp.json();
+  const resp = await fetch("/api/data");
+  let data = await resp.json();
 
-    // mostra todos, inclusive os aguardando listagem (sem preço)
-    data.forEach(d => {
-      if (!d.lastPrice || d.lastPrice === 0) {
-        d.decision = "aguardando";
-        d.atrRel = d.rsi = d.bbWidth = d.volumeUSD = d.oiUSD = d.liqOI = d.score = 0;
-      }
-    });
-
-    if (currentFilter !== "all") {
-      data = data.filter(m => m.decision === currentFilter);
+  // mostra inclusive os que ainda não têm preço
+  data.forEach(m => {
+    if (!m.lastPrice || m.lastPrice === 0) {
+      m.decision = "neutral";
+      m.status = "aguardando";
     }
-    if (hideNoLiquidity) data = data.filter(m => (m.volumeUSD ?? 0) > 0);
-    if (hideNeutros) data = data.filter(m => m.decision !== "neutral");
+  });
 
-    data.sort((a,b)=>{
-      const va=a[sortKey]??0, vb=b[sortKey]??0;
-      if(typeof va==="string"||typeof vb==="string")return sortDir==="asc"?va.localeCompare(vb):vb.localeCompare(va);
-      return sortDir==="asc"?va-vb:vb-va;
-    });
+  if (currentFilter !== "all") data = data.filter(m => m.decision === currentFilter);
+  if (hideNoLiquidity) data = data.filter(m => m.volumeUSD > 0);
+  if (hideNeutros) data = data.filter(m => m.decision !== "neutral");
 
-    const tb=document.querySelector("#tbl tbody");
-    tb.innerHTML="";
-    data.forEach((m,i)=>{
-      const tr=document.createElement("tr");
-      if(m.decision==="long")tr.className="green";
-      else if(m.decision==="short")tr.className="red";
-      else if(m.decision==="lateral")tr.className="blue";
-      else if(m.decision==="aguardando")tr.className="aguardando";
-      else tr.className="gray";
+  data.sort((a,b)=>{
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === "string") { va = va.toUpperCase(); vb = vb.toUpperCase(); }
+    if (va < vb) return sortDir === "asc" ? -1 : 1;
+    if (va > vb) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
 
-      // alerta se virar neutro
-      if(previousStates[m.symbol] && previousStates[m.symbol]!=="neutral" && m.decision==="neutral"){
-        tr.classList.add("flash");
-        setTimeout(()=>tr.classList.remove("flash"),30000);
-      }
-      previousStates[m.symbol]=m.decision;
+  const tb=document.querySelector("#tbl tbody");
+  tb.innerHTML="";
+  data.forEach((m,i)=>{
+    const tr=document.createElement("tr");
+    if (m.decision==="long") tr.className="green";
+    else if (m.decision==="short") tr.className="red";
+    else if (m.decision==="lateral") tr.className="blue";
+    else tr.className="gray"; // neutral
 
-      tr.innerHTML=`
-        <td>${i+1}</td>
-        <td>${m.symbol}</td>
-        <td>${m.lastPrice?usdFmt.format(m.lastPrice):"-"}</td>
-        <td class="${atrClass(m.atrRel)}">${m.atrRel?(m.atrRel*100).toFixed(3)+"%":"-"}</td>
-        <td>${m.bbWidth?m.bbWidth.toFixed(4):"-"}</td>
-        <td class="${rsiClass(m.rsi)}">${m.rsi?m.rsi.toFixed(1):"-"}</td>
-        <td>${m.volumeUSD?usdFmt.format(m.volumeUSD):"-"}</td>
-        <td>${m.oiUSD?usdFmt.format(m.oiUSD):"-"}</td>
-        <td>${m.liqOI?m.liqOI.toFixed(4):"-"}</td>
-        <td>${m.score||0}</td>
-        <td>${m.decision.toUpperCase()}</td>
-      `;
-      tb.appendChild(tr);
-    });
-  } catch (err) {
-    console.error("Erro ao carregar:", err);
-  }
+    if (previousStates[m.symbol] && previousStates[m.symbol] !== "neutral" && m.decision === "neutral") {
+      tr.classList.add("flash");
+      setTimeout(()=>tr.classList.remove("flash"), 30000);
+    }
+    previousStates[m.symbol] = m.decision;
+
+    tr.innerHTML=`
+      <td>${i+1}</td>
+      <td>${m.symbol}</td>
+      <td>${m.lastPrice ? usdFmt.format(m.lastPrice) : "-"}</td>
+      <td class="${atrClass(m.atrRel)}">${m.atrRel ? (m.atrRel*100).toFixed(3)+'%' : '-'}</td>
+      <td>${m.bbWidth ? m.bbWidth.toFixed(4) : '-'}</td>
+      <td class="${rsiClass(m.rsi)}">${m.rsi ? m.rsi.toFixed(1) : '-'}</td>
+      <td>${usdFmt.format(m.volumeUSD || 0)}</td>
+      <td>${usdFmt.format(m.oiUSD || 0)}</td>
+      <td>${m.liqOI ? m.liqOI.toFixed(4) : '-'}</td>
+      <td>${m.score || '-'}</td>
+      <td>${m.decision ? m.decision.toUpperCase() : '-'}</td>
+    `;
+    tb.appendChild(tr);
+  });
 }
 
 document.querySelectorAll("th[data-key]").forEach(th=>{
   th.addEventListener("click",()=>{
-    const key=th.getAttribute("data-key");
-    if(sortKey===key){sortDir=sortDir==="asc"?"desc":"asc";}
-    else{sortKey=key;sortDir="desc";}
+    const key = th.getAttribute("data-key");
+    if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
+    else { sortKey = key; sortDir = "desc"; }
     load();
   });
 });
