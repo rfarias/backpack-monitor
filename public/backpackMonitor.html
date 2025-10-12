@@ -4,116 +4,221 @@
 <meta charset="UTF-8">
 <title>Backpack Monitor</title>
 <style>
-body{background:#111;color:#eee;font-family:Arial;padding:20px;}
-nav{margin-bottom:15px;}
-nav button{margin-right:10px;padding:8px 16px;cursor:pointer;border:none;border-radius:6px;background:#333;color:#fff;font-weight:bold;}
-nav button.active{background:#555;}
+body{background:#111;color:#eee;font-family:Arial;padding:20px;line-height:1.5;}
 table{width:100%;border-collapse:collapse;margin-top:10px;}
-th,td{padding:6px;border:1px solid #333;text-align:center;}
+th,td{padding:6px;border:1px solid #333;text-align:center;cursor:pointer;}
 th{background:#222;}
+th:hover{background:#333;}
 .green{background:#133d1d;color:#6f6;}
 .red{background:#3d1313;color:#f99;}
 .blue{background:#13213d;color:#6cf;}
 .gray{background:#2a2a2a;color:#ccc;}
-.loading{padding:20px;text-align:center;color:#aaa;}
-.networks{font-size:13px;color:#ccc;}
+.filters{margin:15px 0;}
+.filters button{margin-right:6px;padding:6px 12px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;}
+.filters button.active{background:#555;color:#fff;}
+.rsi-low{color:#6f6;font-weight:bold;}
+.rsi-high{color:#f66;font-weight:bold;}
+.rsi-mid{color:#ccc;}
+.atr-low{color:#6f6;font-weight:bold;}
+.atr-mid{color:#ff6;font-weight:bold;}
+.atr-high{color:#f66;font-weight:bold;}
+th[title]{cursor:help;}
+.info-box{background:#1a1a1a;border:1px solid #333;padding:12px;margin-bottom:15px;border-radius:6px;font-size:14px;color:#ccc;}
+.info-box strong{color:#fff;}
+@keyframes flash{0%{background-color:#ffae00;}50%{background-color:#111;}100%{background-color:#ffae00;}}
+.flash{animation:flash 1s linear infinite;}
+.tabs{margin-bottom:15px;}
+.tabs button{margin-right:6px;padding:6px 12px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;}
+.tabs button.active{background:#555;color:#fff;}
+.network-tag{padding:4px 8px;border-radius:4px;margin:2px;display:inline-block;}
+.net-ok{background:#133d1d;color:#6f6;}
+.net-off{background:#3d1313;color:#f99;}
 </style>
 </head>
 <body>
 <h1>📊 Backpack Monitor</h1>
 
-<nav>
-  <button id="tabPerp" class="active" onclick="switchTab('perp')">Perpétuos</button>
-  <button id="tabSpot" onclick="switchTab('spot')">Spot</button>
-  <button id="tabTransfer" onclick="switchTab('transfer')">Depósitos / Withdraw</button>
-</nav>
-
-<div id="content">
-  <div id="perp" class="tab"></div>
-  <div id="spot" class="tab" style="display:none"></div>
-  <div id="transfer" class="tab" style="display:none"></div>
+<div class="tabs">
+  <button id="tab-perp" class="active" onclick="switchTab('perp')">Perpétuos</button>
+  <button id="tab-spot" onclick="switchTab('spot')">Spot</button>
+  <button id="tab-transfer" onclick="switchTab('transfer')">Depósitos / Withdraw</button>
 </div>
 
+<div class="info-box" id="info-box">
+  <p><strong>Timeframe:</strong> Indicadores calculados no gráfico de <strong>3 minutos</strong> (se não houver dados suficientes, usa-se <strong>5 minutos</strong>).</p>
+  <p><strong>Como interpretar:</strong></p>
+  <ul>
+    <li><strong>ATR%</strong>: mede volatilidade. 
+      <span style="color:#6f6">Verde ≤0.3%</span>, 
+      <span style="color:#ff6">Amarelo 0.3–0.7%</span>, 
+      <span style="color:#f66">Vermelho ≥0.7%</span>.
+    </li>
+    <li><strong>RSI</strong>: mede força do mercado. Verde ≤30, Vermelho ≥70.</li>
+    <li><strong>BB Width</strong>: largura das Bandas de Bollinger. Baixo = consolidação, alto = tendência.</li>
+    <li><strong>Decisão:</strong> 
+      <span style="color:#6f6">VERDE = Long</span>, 
+      <span style="color:#f99">VERMELHO = Short</span>, 
+      <span style="color:#6cf">AZUL = Lateral</span>, 
+      <span style="color:#ccc">CINZA = Neutro</span>.
+    </li>
+  </ul>
+  <p><strong>Recomendação:</strong> Posições apenas em mercados com <u>ATR% baixo</u>, <u>liquidez alta</u> e <u>RSI extremo</u>. Se ficar <strong>Neutro</strong>, feche posição.</p>
+</div>
+
+<div class="filters" id="filters">
+  <button onclick="setFilter('all')" id="btn-all" class="active">Todos</button>
+  <button onclick="setFilter('long')" id="btn-long">Só Long</button>
+  <button onclick="setFilter('short')" id="btn-short">Só Short</button>
+  <button onclick="setFilter('lateral')" id="btn-lateral">Só Lateral</button>
+  <button onclick="setFilter('neutral')" id="btn-neutral">Só Neutro</button>
+  <button onclick="toggleLiquidity()" id="btn-liq">Ocultar sem liquidez</button>
+  <button onclick="toggleNeutros()" id="btn-neutro">Ocultar neutros</button>
+</div>
+
+<table id="tbl">
+  <thead id="tbl-head">
+    <tr>
+      <th>#</th>
+      <th data-key="symbol">Symbol</th>
+      <th data-key="lastPrice">Price</th>
+      <th data-key="atrRel">ATR%</th>
+      <th data-key="bbWidth">BB Width</th>
+      <th data-key="rsi">RSI</th>
+      <th data-key="volumeUSD">Volume</th>
+      <th data-key="oiUSD" id="col-oi">OI</th>
+      <th data-key="decision">Decisão</th>
+      <th data-key="score">Score</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script>
-let currentTab="perp";
-let controller;
+let currentTab = "perp";
+let currentFilter = "all";
+let hideNoLiquidity = false;
+let hideNeutros = false;
+let sortKey = "score";
+let sortDir = "desc";
+let previousStates = {};
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 function switchTab(tab){
-  document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
-  document.getElementById("tab"+tab.charAt(0).toUpperCase()+tab.slice(1)).classList.add("active");
-  document.querySelectorAll(".tab").forEach(div=>div.style.display="none");
-  document.getElementById(tab).style.display="block";
-  currentTab=tab;
-  loadData();
+  currentTab = tab;
+  document.querySelectorAll(".tabs button").forEach(btn=>btn.classList.remove("active"));
+  document.getElementById("tab-"+tab).classList.add("active");
+  document.getElementById("col-oi").style.display = (tab === "perp" ? "" : "none");
+  document.getElementById("filters").style.display = (tab === "transfer" ? "none" : "block");
+  document.getElementById("info-box").style.display = (tab === "transfer" ? "none" : "block");
+  load();
 }
 
-async function loadData(){
-  if(controller)controller.abort();
-  controller=new AbortController();
-  const div=document.getElementById(currentTab);
-  div.innerHTML='<div class="loading">⏳ Carregando dados...</div>';
-  let url="/api/"+(currentTab==="perp"?"data":currentTab);
-  try{
-    const resp=await fetch(url,{signal:controller.signal});
-    const data=await resp.json();
-    if(currentTab==="transfer")renderTransfer(data);
-    else renderMarkets(data);
-  }catch(e){
-    if(e.name!=="AbortError")div.innerHTML='<div class="loading">Erro ao carregar dados.</div>';
+function setFilter(f){
+  currentFilter=f;
+  document.querySelectorAll(".filters button").forEach(btn=>btn.classList.remove("active"));
+  document.getElementById("btn-"+f).classList.add("active");
+  load();
+}
+
+function toggleLiquidity(){
+  hideNoLiquidity=!hideNoLiquidity;
+  const btn=document.getElementById("btn-liq");
+  btn.classList.toggle("active",hideNoLiquidity);
+  btn.textContent=hideNoLiquidity?"Mostrar sem liquidez":"Ocultar sem liquidez";
+  load();
+}
+function toggleNeutros(){
+  hideNeutros=!hideNeutros;
+  const btn=document.getElementById("btn-neutro");
+  btn.classList.toggle("active",hideNeutros);
+  btn.textContent=hideNeutros?"Mostrar neutros":"Ocultar neutros";
+  load();
+}
+function rsiClass(rsi){if(rsi<=30)return"rsi-low";if(rsi>=70)return"rsi-high";return"rsi-mid";}
+function atrClass(atr){const atrPct=atr*100;if(atrPct<=0.3)return"atr-low";if(atrPct>=0.7)return"atr-high";return"atr-mid";}
+
+async function load(){
+  const endpoint = currentTab==="perp"?"/api/data":currentTab==="spot"?"/api/spot":"/api/transfer";
+  const resp = await fetch(endpoint);
+  let data = await resp.json();
+
+  const tb=document.querySelector("#tbl tbody");
+  const th=document.querySelector("#tbl-head tr");
+  tb.innerHTML="";
+
+  if(currentTab==="transfer"){
+    // Cabeçalho simplificado
+    th.innerHTML=`<th>#</th><th>Ativo</th><th>Redes disponíveis</th>`;
+    data.forEach((m,i)=>{
+      const tr=document.createElement("tr");
+      const networks=(m.networks||[]).map(n=>`
+        <div class="network-tag ${n.deposit&&n.withdraw?'net-ok':'net-off'}">
+          ${n.network} ${n.deposit?'✅':'❌'}Dep / ${n.withdraw?'✅':'❌'}Wdr
+        </div>`).join("");
+      tr.innerHTML=`<td>${i+1}</td><td>${m.symbol}</td><td>${networks||"-"}</td>`;
+      tb.appendChild(tr);
+    });
+    return;
   }
-}
 
-function renderMarkets(data){
-  const div=document.getElementById(currentTab);
-  if(!data||!data.length){div.innerHTML='<div class="loading">Nenhum dado disponível.</div>';return;}
-  const headers=currentTab==="perp"?
-    ["Symbol","Price","ATR%","RSI","BB Width","Volume (USD)","Open Interest (USD)","Liq/OI","Score","Decisão"]:
-    ["Symbol","Price","Volume (USD)"];
-  let html="<table><thead><tr>"+headers.map(h=>`<th>${h}</th>`).join("")+"</tr></thead><tbody>";
-  data.forEach(m=>{
-    let cls="gray";
-    if(m.decision==="long")cls="green";
-    else if(m.decision==="short")cls="red";
-    else if(m.decision==="lateral")cls="blue";
-    html+="<tr class='"+cls+"'>";
-    if(currentTab==="perp"){
-      html+=`
-        <td>${m.symbol}</td>
-        <td>${m.lastPrice?.toFixed(4)||"-"}</td>
-        <td>${(m.atrRel*100).toFixed(3)}%</td>
-        <td>${m.rsi?.toFixed(1)||"-"}</td>
-        <td>${m.bbWidth?.toFixed(4)||"-"}</td>
-        <td>${m.volumeUSD?.toFixed(0)||"-"}</td>
-        <td>${m.oiUSD?.toFixed(0)||"-"}</td>
-        <td>${m.liqOI?.toFixed(3)||"-"}</td>
-        <td>${m.score||0}</td>
-        <td>${m.decision||"neutral"}</td>`;
-    }else{
-      html+=`
-        <td>${m.symbol}</td>
-        <td>${m.lastPrice?.toFixed(4)||"-"}</td>
-        <td>${m.volumeUSD?.toFixed(0)||"-"}</td>`;
+  // Restaura cabeçalho completo para as outras abas
+  th.innerHTML=`<th>#</th><th data-key="symbol">Symbol</th><th data-key="lastPrice">Price</th>
+  <th data-key="atrRel">ATR%</th><th data-key="bbWidth">BB Width</th><th data-key="rsi">RSI</th>
+  <th data-key="volumeUSD">Volume</th><th data-key="oiUSD" id="col-oi">OI</th>
+  <th data-key="decision">Decisão</th><th data-key="score">Score</th>`;
+  document.getElementById("col-oi").style.display=(currentTab==="perp"?"":"none");
+
+  if(currentFilter!=="all")data=data.filter(m=>m.decision===currentFilter);
+  if(hideNoLiquidity)data=data.filter(m=>m.volumeUSD>0);
+  if(hideNeutros)data=data.filter(m=>m.decision!=="neutral");
+
+  data.sort((a,b)=>{
+    let va=a[sortKey],vb=b[sortKey];
+    if(typeof va==="string"){va=va.toUpperCase();vb=vb.toUpperCase();}
+    if(va<vb)return sortDir==="asc"?-1:1;
+    if(va>vb)return sortDir==="asc"?1:-1;
+    return 0;
+  });
+
+  data.forEach((m,i)=>{
+    const tr=document.createElement("tr");
+    if(m.decision==="long")tr.className="green";
+    else if(m.decision==="short")tr.className="red";
+    else if(m.decision==="lateral")tr.className="blue";
+    else tr.className="gray";
+
+    if(previousStates[m.symbol] && previousStates[m.symbol]!=="neutral" && m.decision==="neutral"){
+      tr.classList.add("flash");
+      setTimeout(()=>tr.classList.remove("flash"),30000);
     }
-    html+="</tr>";
+    previousStates[m.symbol]=m.decision;
+
+    tr.innerHTML=`
+      <td>${i+1}</td>
+      <td>${m.symbol}</td>
+      <td>${m.lastPrice>0?usdFmt.format(m.lastPrice):"-"}</td>
+      <td class="${atrClass(m.atrRel)}">${m.lastPrice>0?(m.atrRel*100).toFixed(3)+"%":"-"}</td>
+      <td>${m.lastPrice>0?m.bbWidth.toFixed(4):"-"}</td>
+      <td class="${rsiClass(m.rsi)}">${m.lastPrice>0?m.rsi.toFixed(1):"-"}</td>
+      <td>${m.lastPrice>0?usdFmt.format(m.volumeUSD):"-"}</td>
+      ${currentTab==="perp"?`<td>${usdFmt.format(m.oiUSD||0)}</td>`:""}
+      <td>${m.decision?.toUpperCase()||"-"}</td>
+      <td>${m.score||0}</td>`;
+    tb.appendChild(tr);
   });
-  html+="</tbody></table>";
-  div.innerHTML=html;
 }
 
-function renderTransfer(data){
-  const div=document.getElementById("transfer");
-  if(!data||!data.length){div.innerHTML='<div class="loading">Nenhum ativo encontrado.</div>';return;}
-  let html="<table><thead><tr><th>Ativo</th><th>Redes disponíveis</th></tr></thead><tbody>";
-  data.forEach(a=>{
-    const nets=(a.networks||[]).map(n=>`${n.network} — Depósito: ${n.deposit?"🟢":"🔴"} | Saque: ${n.withdraw?"🟢":"🔴"}`).join("<br>");
-    html+=`<tr><td>${a.symbol}</td><td class="networks">${nets}</td></tr>`;
+document.querySelectorAll("th[data-key]").forEach(th=>{
+  th.addEventListener("click",()=>{
+    const key=th.getAttribute("data-key");
+    if(sortKey===key)sortDir=sortDir==="asc"?"desc":"asc";
+    else{sortKey=key;sortDir="desc";}
+    load();
   });
-  html+="</tbody></table>";
-  div.innerHTML=html;
-}
+});
 
-loadData();
-setInterval(loadData,30000);
+load();
+setInterval(load,30000);
 </script>
 </body>
 </html>
