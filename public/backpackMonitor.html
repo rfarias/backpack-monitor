@@ -33,6 +33,7 @@ th[title]{cursor:help;}
 .network-tag{padding:4px 8px;border-radius:4px;margin:2px;display:inline-block;}
 .net-ok{background:#133d1d;color:#6f6;}
 .net-off{background:#3d1313;color:#f99;}
+.loading{color:#aaa;font-style:italic;text-align:center;}
 </style>
 </head>
 <body>
@@ -101,6 +102,8 @@ let hideNeutros = false;
 let sortKey = "score";
 let sortDir = "desc";
 let previousStates = {};
+let loadId = 0;
+
 const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 function switchTab(tab){
@@ -138,30 +141,42 @@ function rsiClass(rsi){if(rsi<=30)return"rsi-low";if(rsi>=70)return"rsi-high";re
 function atrClass(atr){const atrPct=atr*100;if(atrPct<=0.3)return"atr-low";if(atrPct>=0.7)return"atr-high";return"atr-mid";}
 
 async function load(){
+  const id = ++loadId;
   const endpoint = currentTab==="perp"?"/api/data":currentTab==="spot"?"/api/spot":"/api/transfer";
-  const resp = await fetch(endpoint);
-  let data = await resp.json();
+  const tb=document.querySelector("#tbl tbody");
+  tb.innerHTML="<tr><td colspan='10' class='loading'>Carregando...</td></tr>";
 
+  try {
+    const resp = await fetch(endpoint);
+    const data = await resp.json();
+    if (id !== loadId) return; // ignora se aba mudou antes da resposta
+    renderTable(data);
+  } catch (e) {
+    if (id === loadId)
+      tb.innerHTML="<tr><td colspan='10' class='loading'>Erro ao carregar</td></tr>";
+  }
+}
+
+function renderTable(data){
   const tb=document.querySelector("#tbl tbody");
   const th=document.querySelector("#tbl-head tr");
   tb.innerHTML="";
 
   if(currentTab==="transfer"){
-    // Cabeçalho simplificado
     th.innerHTML=`<th>#</th><th>Ativo</th><th>Redes disponíveis</th>`;
     data.forEach((m,i)=>{
-      const tr=document.createElement("tr");
       const networks=(m.networks||[]).map(n=>`
         <div class="network-tag ${n.deposit&&n.withdraw?'net-ok':'net-off'}">
-          ${n.network} ${n.deposit?'✅':'❌'}Dep / ${n.withdraw?'✅':'❌'}Wdr
+          ${n.chain||n.network} ${n.deposit?'✅':'❌'}Dep / ${n.withdraw?'✅':'❌'}Wdr
         </div>`).join("");
+      const tr=document.createElement("tr");
       tr.innerHTML=`<td>${i+1}</td><td>${m.symbol}</td><td>${networks||"-"}</td>`;
       tb.appendChild(tr);
     });
     return;
   }
 
-  // Restaura cabeçalho completo para as outras abas
+  // Cabeçalho completo
   th.innerHTML=`<th>#</th><th data-key="symbol">Symbol</th><th data-key="lastPrice">Price</th>
   <th data-key="atrRel">ATR%</th><th data-key="bbWidth">BB Width</th><th data-key="rsi">RSI</th>
   <th data-key="volumeUSD">Volume</th><th data-key="oiUSD" id="col-oi">OI</th>
@@ -197,9 +212,9 @@ async function load(){
       <td>${i+1}</td>
       <td>${m.symbol}</td>
       <td>${m.lastPrice>0?usdFmt.format(m.lastPrice):"-"}</td>
-      <td class="${atrClass(m.atrRel)}">${m.lastPrice>0?(m.atrRel*100).toFixed(3)+"%":"-"}</td>
-      <td>${m.lastPrice>0?m.bbWidth.toFixed(4):"-"}</td>
-      <td class="${rsiClass(m.rsi)}">${m.lastPrice>0?m.rsi.toFixed(1):"-"}</td>
+      <td class="${atrClass(m.atrRel||0)}">${m.lastPrice>0?(m.atrRel*100).toFixed(3)+"%":"-"}</td>
+      <td>${m.lastPrice>0?(m.bbWidth?.toFixed(4)||"-"):"-"}</td>
+      <td class="${rsiClass(m.rsi||0)}">${m.lastPrice>0?(m.rsi?.toFixed(1)||"-"):"-"}</td>
       <td>${m.lastPrice>0?usdFmt.format(m.volumeUSD):"-"}</td>
       ${currentTab==="perp"?`<td>${usdFmt.format(m.oiUSD||0)}</td>`:""}
       <td>${m.decision?.toUpperCase()||"-"}</td>
