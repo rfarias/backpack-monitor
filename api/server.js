@@ -183,9 +183,42 @@ setInterval(updateAllData, UPDATE_INTERVAL);
 updateAllData();
 
 // === ROTAS API ===
-app.get("/api/data", async (req,res)=>{ res.json(cachedPerp); });
-app.get("/api/spot", async (req,res)=>{ res.json(cachedSpot); });
-app.get("/api/transfer", async (req,res)=>{ res.json(cachedTransfer); });
+// se o cache estiver vazio, força update sincronamente para garantir dados na primeira requisição
+app.get("/api/data", async (req, res) => {
+  try {
+    if (!cachedPerp || cachedPerp.length === 0) {
+      await updateAllData(); // bloqueia até popular cache
+    }
+    return res.json(cachedPerp);
+  } catch (e) {
+    console.log("Erro /api/data:", e.message);
+    return res.json([]);
+  }
+});
+
+app.get("/api/spot", async (req, res) => {
+  try {
+    if (!cachedSpot || cachedSpot.length === 0) {
+      await updateAllData();
+    }
+    return res.json(cachedSpot);
+  } catch (e) {
+    console.log("Erro /api/spot:", e.message);
+    return res.json([]);
+  }
+});
+
+app.get("/api/transfer", async (req, res) => {
+  try {
+    if (!cachedTransfer || cachedTransfer.length === 0) {
+      await updateAllData();
+    }
+    return res.json(cachedTransfer);
+  } catch (e) {
+    console.log("Erro /api/transfer:", e.message);
+    return res.json([]);
+  }
+});
 
 // === EXPORT ===
 module.exports = app;
