@@ -1,5 +1,5 @@
 // === BACKPACK MONITOR SERVER ===
-// Atualiza indicadores, mantém histórico e exibe todos os mercados (inclusive os ainda não listados)
+// Atualiza indicadores, mantém histórico e exibe todos os mercados (perpétuos, spot e ativos de depósito/withdraw)
 
 const express = require("express");
 const axios = require("axios");
@@ -24,15 +24,27 @@ const MAX_HISTORY = 100;
 const UPDATE_INTERVAL = 30 * 1000; // 30 segundos
 
 // === HELPERS ===
-function mean(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0; }
-function std(arr) { if (arr.length < 2) return 0; const m = mean(arr); return Math.sqrt(arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1)); }
+function mean(arr) {
+  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+}
+function std(arr) {
+  if (arr.length < 2) return 0;
+  const m = mean(arr);
+  return Math.sqrt(arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1));
+}
 
 // === INDICADORES ===
 function computeATR(highs, lows, closes, period = ATR_PERIOD) {
   if (highs.length < 2) return 0;
   const trs = [];
   for (let i = 1; i < highs.length; i++) {
-    trs.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+    trs.push(
+      Math.max(
+        highs[i] - lows[i],
+        Math.abs(highs[i] - closes[i - 1]),
+        Math.abs(lows[i] - closes[i - 1])
+      )
+    );
   }
   return trs.length < period ? mean(trs) : mean(trs.slice(-period));
 }
@@ -40,8 +52,8 @@ function computeATR(highs, lows, closes, period = ATR_PERIOD) {
 function computeRSI(closes, period = RSI_PERIOD) {
   if (closes.length <= period) return 50;
   const deltas = closes.slice(1).map((c, i) => c - closes[i]);
-  const gains = deltas.map(d => d > 0 ? d : 0);
-  const losses = deltas.map(d => d < 0 ? Math.abs(d) : 0);
+  const gains = deltas.map((d) => (d > 0 ? d : 0));
+  const losses = deltas.map((d) => (d < 0 ? Math.abs(d) : 0));
   const avgGain = mean(gains.slice(-period));
   const avgLoss = mean(losses.slice(-period)) || 1e-9;
   const rs = avgGain / avgLoss;
@@ -72,22 +84,37 @@ async function fetchKlines(symbol, interval = "3m", limit = 100) {
   try {
     const nowSec = Math.floor(Date.now() / 1000);
     const startSec = nowSec - limit * intervalSec;
-    const resp = await axios.get("https://api.backpack.exchange/api/v1/klines", { params: { symbol, interval, startTime: startSec, endTime: nowSec } });
+    const resp = await axios.get("https://api.backpack.exchange/api/v1/klines", {
+      params: { symbol, interval, startTime: startSec, endTime: nowSec },
+    });
     if (resp.status === 200 && Array.isArray(resp.data) && resp.data.length > 0) {
-      const arr = resp.data.map(c => ({ open: +c.open, high: +c.high, low: +c.low, close: +c.close, volume: +c.volume, ts: +c.openTime }));
+      const arr = resp.data.map((c) => ({
+        open: +c.open,
+        high: +c.high,
+        low: +c.low,
+        close: +c.close,
+        volume: +c.volume,
+        ts: +c.openTime,
+      }));
       if (arr.length >= 2) return arr;
     }
-  } catch (e) { console.log(`⚠️ klines falhou ${symbol}: ${e.message}`); }
+  } catch (e) {
+    console.log(`⚠️ klines falhou ${symbol}: ${e.message}`);
+  }
 
-  try { // fallback trades
-    const tResp = await axios.get("https://api.backpack.exchange/api/v1/trades", { params: { symbol, limit: limit * 3 } });
+  // fallback via trades
+  try {
+    const tResp = await axios.get("https://api.backpack.exchange/api/v1/trades", {
+      params: { symbol, limit: limit * 3 },
+    });
     const trades = tResp.data;
     const buckets = {};
-    trades.forEach(tr => {
+    trades.forEach((tr) => {
       const ts = Math.floor(tr.timestamp / 1000);
       const bucket = Math.floor(ts / intervalSec) * intervalSec;
       const p = +tr.price, q = +tr.quantity;
-      if (!buckets[bucket]) buckets[bucket] = { open: null, high: -Infinity, low: Infinity, close: null, volume: 0, ts: bucket };
+      if (!buckets[bucket])
+        buckets[bucket] = { open: null, high: -Infinity, low: Infinity, close: null, volume: 0, ts: bucket };
       const b = buckets[bucket];
       if (b.open === null) b.open = p;
       b.high = Math.max(b.high, p);
@@ -95,8 +122,11 @@ async function fetchKlines(symbol, interval = "3m", limit = 100) {
       b.close = p;
       b.volume += q * p;
     });
-    return Object.values(buckets).filter(b => b.open !== null).sort((a,b)=>a.ts-b.ts);
-  } catch (e) { console.log(`❌ trades falhou ${symbol}: ${e.message}`); return []; }
+    return Object.values(buckets).filter((b) => b.open !== null).sort((a, b) => a.ts - b.ts);
+  } catch (e) {
+    console.log(`❌ trades falhou ${symbol}: ${e.message}`);
+    return [];
+  }
 }
 
 // === DECISÃO ===
@@ -109,45 +139,52 @@ function decide({ price, atrRel, rsi, bb, ema20, volLastCandle }) {
   return { decision: "neutral", score: 0 };
 }
 
-// === HISTÓRICO ===
+// === HISTÓRICO GLOBAL ===
 const historyMap = {};
 
-// === FUNÇÃO GENÉRICA PARA SNAPSHOT ===
-async function takeSnapshotForMarkets(filterFn = m => true) {
+// === SNAPSHOT PERPÉTUOS ===
+async function takeSnapshotPerp() {
   try {
-    const marketResp = await axios.get("https://api.backpack.exchange/api/v1/markets");
+    const [oiResp, marketResp] = await Promise.all([
+      axios.get("https://api.backpack.exchange/api/v1/openInterest"),
+      axios.get("https://api.backpack.exchange/api/v1/markets"),
+    ]);
     const allMarkets = marketResp.data || [];
-    const markets = allMarkets.filter(filterFn);
+    const perp = allMarkets.filter((m) => m.symbol.endsWith("_PERP"));
+    const oiMap = {};
+    oiResp.data.forEach((m) => (oiMap[m.symbol] = m));
 
     const combined = [];
-
-    for (const m of markets) {
+    for (const m of perp) {
       try {
+        const oiEntry = oiMap[m.symbol] || {};
         const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker", { params: { symbol: m.symbol } });
         const ticker = Array.isArray(tResp.data) ? tResp.data[0] : tResp.data;
         const lastPrice = +ticker.lastPrice || 0;
 
-        let atrRel = 0, rsi = 0, bbWidth = 0, ema20 = 0;
-        let volLastCandle = 0;
-
+        let atrRel = 0, rsi = 0, bbWidth = 0, ema20 = 0, volLastCandle = 0;
         let kl = [];
         if (lastPrice > 0) {
           kl = await fetchKlines(m.symbol, "3m", 100);
           if (kl.length < 10) kl = await fetchKlines(m.symbol, "5m", 100);
-          const closes = kl.map(k=>k.close);
-          const highs = kl.map(k=>k.high);
-          const lows = kl.map(k=>k.low);
-          const atr = computeATR(highs,lows,closes);
-          atrRel = lastPrice ? atr/lastPrice : 0;
+          const closes = kl.map((k) => k.close);
+          const highs = kl.map((k) => k.high);
+          const lows = kl.map((k) => k.low);
+          const atr = computeATR(highs, lows, closes);
+          atrRel = lastPrice ? atr / lastPrice : 0;
           rsi = computeRSI(closes);
           const bb = computeBollinger(closes);
           bbWidth = bb.width;
           ema20 = computeEMA(closes);
-          volLastCandle = kl.length ? kl[kl.length-1].volume*lastPrice : 0;
+          volLastCandle = kl.length ? kl[kl.length - 1].volume * lastPrice : 0;
         }
 
+        const oiUSD = (+oiEntry.openInterest || 0) * lastPrice;
         const volumeUSD = (+ticker.volume || 0) * lastPrice;
-        const { decision, score } = lastPrice ? decide({ price:lastPrice, atrRel, rsi, bb:{width:bbWidth}, ema20, volLastCandle }) : { decision: "aguardando", score: 0 };
+        const liqOI = oiUSD ? volumeUSD / oiUSD : 0;
+        const { decision, score } = lastPrice
+          ? decide({ price: lastPrice, atrRel, rsi, bb: { width: bbWidth }, ema20, volLastCandle })
+          : { decision: "aguardando", score: 0 };
 
         combined.push({
           symbol: m.symbol,
@@ -157,68 +194,78 @@ async function takeSnapshotForMarkets(filterFn = m => true) {
           bbWidth,
           ema20,
           volumeUSD,
+          oiUSD,
+          liqOI,
           decision,
           score,
-          ts: Date.now()
+          ts: Date.now(),
         });
-      } catch(e) { console.log("Erro em", m.symbol, e.message); }
+      } catch (e) {
+        console.log("Erro em", m.symbol, e.message);
+      }
     }
-
-    return combined.sort((a,b)=>b.volumeUSD - a.volumeUSD);
-  } catch(e){ console.log("snapshot error:", e.message); return []; }
+    return combined;
+  } catch (e) {
+    console.log("snapshot perp error:", e.message);
+    return [];
+  }
 }
 
-// === CACHE AUTOMÁTICO ===
-let cachedPerp = [], cachedSpot = [], cachedTransfer = [];
-let lastUpdate = 0;
+// === SNAPSHOT SPOT ===
+async function takeSnapshotSpot() {
+  try {
+    const marketResp = await axios.get("https://api.backpack.exchange/api/v1/markets");
+    const allMarkets = marketResp.data || [];
+    const spot = allMarkets.filter((m) => !m.symbol.endsWith("_PERP"));
 
-async function updateAllData() {
-  cachedPerp = await takeSnapshotForMarkets(m => m.symbol.endsWith("_PERP"));
-  cachedSpot = await takeSnapshotForMarkets(m => !m.symbol.endsWith("_PERP") && !m.symbol.includes("TRANSFER"));
-  cachedTransfer = await takeSnapshotForMarkets(m => m.symbol.includes("TRANSFER"));
-  lastUpdate = Date.now();
+    const combined = [];
+    for (const m of spot) {
+      try {
+        const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker", { params: { symbol: m.symbol } });
+        const ticker = Array.isArray(tResp.data) ? tResp.data[0] : tResp.data;
+        const lastPrice = +ticker.lastPrice || 0;
+        const volumeUSD = (+ticker.volume || 0) * lastPrice;
+
+        combined.push({
+          symbol: m.symbol,
+          lastPrice,
+          volumeUSD,
+          ts: Date.now(),
+        });
+      } catch (e) {
+        console.log("Erro spot:", m.symbol, e.message);
+      }
+    }
+    return combined;
+  } catch (e) {
+    console.log("snapshot spot error:", e.message);
+    return [];
+  }
 }
 
-setInterval(updateAllData, UPDATE_INTERVAL);
-updateAllData();
-
-// === ROTAS API ===
-// se o cache estiver vazio, força update sincronamente para garantir dados na primeira requisição
-app.get("/api/data", async (req, res) => {
+// === SNAPSHOT TRANSFER (DEPÓSITO/WITHDRAW) ===
+async function takeSnapshotTransfer() {
   try {
-    if (!cachedPerp || cachedPerp.length === 0) {
-      await updateAllData(); // bloqueia até popular cache
-    }
-    return res.json(cachedPerp);
+    const resp = await axios.get("https://api.backpack.exchange/api/v1/assets");
+    const assets = resp.data || [];
+    return assets.map((a) => ({
+      symbol: a.symbol || a.asset,
+      networks: (a.networks || []).map((n) => ({
+        chain: n.network || n.chain,
+        deposit: n.depositEnabled,
+        withdraw: n.withdrawEnabled,
+      })),
+    }));
   } catch (e) {
-    console.log("Erro /api/data:", e.message);
-    return res.json([]);
+    console.log("snapshot transfer error:", e.message);
+    return [];
   }
-});
+}
 
-app.get("/api/spot", async (req, res) => {
-  try {
-    if (!cachedSpot || cachedSpot.length === 0) {
-      await updateAllData();
-    }
-    return res.json(cachedSpot);
-  } catch (e) {
-    console.log("Erro /api/spot:", e.message);
-    return res.json([]);
-  }
-});
-
-app.get("/api/transfer", async (req, res) => {
-  try {
-    if (!cachedTransfer || cachedTransfer.length === 0) {
-      await updateAllData();
-    }
-    return res.json(cachedTransfer);
-  } catch (e) {
-    console.log("Erro /api/transfer:", e.message);
-    return res.json([]);
-  }
-});
+// === ROTAS ===
+app.get("/api/data", async (req, res) => res.json(await takeSnapshotPerp()));
+app.get("/api/spot", async (req, res) => res.json(await takeSnapshotSpot()));
+app.get("/api/transfer", async (req, res) => res.json(await takeSnapshotTransfer()));
 
 // === EXPORT ===
 module.exports = app;
