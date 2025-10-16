@@ -1,36 +1,87 @@
-import axios from "axios";
-
+// /api/data.js
 export default async function handler(req, res) {
   try {
-    const [oiResp, marketResp] = await Promise.all([
-      axios.get("https://api.backpack.exchange/api/v1/openInterest"),
-      axios.get("https://api.backpack.exchange/api/v1/markets")
-    ]);
+    const baseUrl = "https://api.backpack.exchange/api/v1";
+    const futRes = await fetch(`${baseUrl}/futures`);
+    if (!futRes.ok) throw new Error("Falha ao acessar markets perp");
+    const futures = await futRes.json();
 
-    const allMarkets = marketResp.data || [];
-    const perp = allMarkets.filter(m => m.symbol.endsWith("_PERP"));
-    const oiMap = {};
-    (oiResp.data || []).forEach(m => (oiMap[m.symbol] = m));
+    const topMarkets = futures
+      .filter(f => f.symbol.endsWith("_USDC"))
+      .slice(0, 15); // limitar para desempenho
 
-    const combined = await Promise.all(
-      perp.slice(0, 20).map(async (m) => {
-        try {
-          const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker", { params: { symbol: m.symbol } });
-          const ticker = Array.isArray(tResp.data) ? tResp.data[0] : tResp.data;
-          const lastPrice = +ticker.lastPrice || 0;
-          const volumeUSD = (+ticker.volume || 0) * lastPrice;
-          const oiUSD = (+oiMap[m.symbol]?.openInterest || 0) * lastPrice;
-          return { symbol: m.symbol, lastPrice, volumeUSD, oiUSD, decision: "neutral", score: 0 };
-        } catch (e) {
-          console.log("Erro ticker:", m.symbol, e.message);
-          return { symbol: m.symbol, lastPrice: 0, volumeUSD: 0, oiUSD: 0, decision: "neutral", score: 0 };
+    const result = await Promise.all(topMarkets.map(async m => {
+      try {
+        const url = `${baseUrl}/candles?symbol=${m.symbol}&interval=3m&limit=200`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Falha candles ${m.symbol}`);
+        const candles = await resp.json();
+
+        if (!Array.isArray(candles) || candles.length < 15)
+          return { symbol: m.symbol, error: "sem dados suficientes" };
+
+        // === Converte para arrays ===
+        const closes = candles.map(c => parseFloat(c.close));
+        const highs = candles.map(c => parseFloat(c.high));
+        const lows = candles.map(c => parseFloat(c.low));
+
+        // === RSI (14) ===
+        let gains = 0, losses = 0;
+        for (let i = 1; i < 15; i++) {
+          const diff = closes[i] - closes[i - 1];
+          if (diff > 0) gains += diff; else losses -= diff;
         }
-      })
-    );
+        const avgGain = gains / 14;
+        const avgLoss = losses / 14 || 1e-9;
+        const rs = avgGain / avgLoss;
+        const rsi = 100 - (100 / (1 + rs));
 
-    res.status(200).json(combined);
-  } catch (e) {
-    console.error("Erro API /data:", e.message);
-    res.status(500).json({ error: e.message });
+        // === ATR (14) ===
+        const trs = highs.map((h, i) =>
+          Math.max(
+            h - lows[i],
+            Math.abs(h - closes[i - 1] || 0),
+            Math.abs(lows[i] - closes[i - 1] || 0)
+          )
+        );
+        const atr = trs.slice(-14).reduce((a, b) => a + b, 0) / 14;
+        const atrRel = atr / closes.at(-1);
+
+        // === Bollinger Bands (20) ===
+        const slice = closes.slice(-20);
+        const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+        const std = Math.sqrt(slice.reduce((a, b) => a + (b - mean) ** 2, 0) / slice.length);
+        const bbWidth = (2 * std) / mean;
+
+        // === Decisão e score ===
+        let decision = "neutral";
+        if (rsi <= 30 && atrRel < 0.006) decision = "long";
+        else if (rsi >= 70 && atrRel < 0.006) decision = "short";
+        else if (atrRel <= 0.004) decision = "lateral";
+
+        const score = Math.round(
+          (100 - Math.abs(50 - rsi)) * (1 - Math.min(atrRel * 100, 1))
+        );
+
+        return {
+          symbol: m.symbol,
+          lastPrice: parseFloat(m.lastPrice),
+          volumeUSD: parseFloat(m.volumeUsd) || 0,
+          oiUSD: parseFloat(m.openInterestUsd) || 0,
+          rsi,
+          atrRel,
+          bbWidth,
+          decision,
+          score
+        };
+      } catch (e) {
+        return { symbol: m.symbol, error: e.message };
+      }
+    }));
+
+    res.status(200).json(result);
+  } catch (err) {
+    console.error("Erro em /api/data:", err);
+    res.status(500).json({ error: "Falha ao carregar dados de perpétuos" });
   }
 }
