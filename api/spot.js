@@ -1,29 +1,130 @@
-import axios from "axios";
+// === backpackMonitor - SPOT ANALYZER ===
+// Atualizado para incluir métricas de liquidez e eficiência de pontuação
 
-export default async function handler(req, res) {
+const API_BASE = "https://api.backpack.exchange/api/v1";
+const SPOT_UPDATE_INTERVAL = 60000; // Atualiza a cada 60s
+
+async function fetchJSON(url, params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const fullUrl = q ? `${url}?${q}` : url;
+  const res = await fetch(fullUrl);
+  if (!res.ok) throw new Error(`Erro ao buscar ${url}`);
+  return await res.json();
+}
+
+async function getSpotMarkets() {
+  const markets = await fetchJSON(`${API_BASE}/markets`);
+  return markets.filter(m => m.type === "spot");
+}
+
+async function getTickers() {
+  return await fetchJSON(`${API_BASE}/tickers`);
+}
+
+async function getDepth(symbol, limit = 20) {
   try {
-    const marketResp = await axios.get("https://api.backpack.exchange/api/v1/markets");
-    const allMarkets = marketResp.data || [];
-    const spot = allMarkets.filter(m => !m.symbol.endsWith("_PERP"));
-
-    const combined = await Promise.all(
-      spot.slice(0, 30).map(async (m) => {
-        try {
-          const tResp = await axios.get("https://api.backpack.exchange/api/v1/ticker", { params: { symbol: m.symbol } });
-          const ticker = Array.isArray(tResp.data) ? tResp.data[0] : tResp.data;
-          const lastPrice = +ticker.lastPrice || 0;
-          const volumeUSD = (+ticker.volume || 0) * lastPrice;
-          return { symbol: m.symbol, lastPrice, volumeUSD, decision: "neutral", score: 0 };
-        } catch (e) {
-          console.log("Erro ticker:", m.symbol, e.message);
-          return { symbol: m.symbol, lastPrice: 0, volumeUSD: 0, decision: "neutral", score: 0 };
-        }
-      })
-    );
-
-    res.status(200).json(combined);
-  } catch (e) {
-    console.error("Erro API /spot:", e.message);
-    res.status(500).json({ error: e.message });
+    return await fetchJSON(`${API_BASE}/depth`, { symbol, limit });
+  } catch {
+    return { bids: [], asks: [] };
   }
 }
+
+// --- Cálculo de métricas de liquidez e eficiência ---
+function calcMetrics(ticker, depthData) {
+  const bids = depthData.bids.map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) }));
+  const asks = depthData.asks.map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) }));
+
+  if (!bids.length || !asks.length) return null;
+
+  const bestBid = bids[0].price;
+  const bestAsk = asks[0].price;
+  const mid = (bestBid + bestAsk) / 2;
+
+  // Soma liquidez em ±0.2% do midprice
+  const lower = mid * 0.998;
+  const upper = mid * 1.002;
+  let depthNear = 0;
+  let bidsSum = 0, asksSum = 0;
+
+  for (const { price, qty } of bids) {
+    if (price >= lower) depthNear += price * qty;
+    bidsSum += price * qty;
+  }
+  for (const { price, qty } of asks) {
+    if (price <= upper) depthNear += price * qty;
+    asksSum += price * qty;
+  }
+
+  const imbalance = (bidsSum - asksSum) / (bidsSum + asksSum + 1e-9);
+  const volume24h = parseFloat(ticker.volume) || 1;
+  const spotOIproxy = depthNear / volume24h;
+  const score = (1 / (1 + spotOIproxy)) * (1 + Math.abs(imbalance));
+
+  return { depthNear, imbalance, spotOIproxy, score, mid };
+}
+
+// --- Atualiza tabela Spot ---
+async function updateSpotTable() {
+  const table = document.getElementById("spotTable");
+  if (!table) return;
+
+  const tickers = await getTickers();
+  const spotMarkets = await getSpotMarkets();
+
+  const spotTickers = tickers.filter(t => spotMarkets.find(m => m.symbol === t.symbol));
+  const data = [];
+
+  for (const t of spotTickers) {
+    const depthData = await getDepth(t.symbol);
+    const metrics = calcMetrics(t, depthData);
+    if (!metrics) continue;
+
+    data.push({
+      symbol: t.symbol,
+      price: parseFloat(t.lastPrice).toFixed(4),
+      volume: parseFloat(t.volume).toFixed(2),
+      depthNear: metrics.depthNear.toFixed(2),
+      imbalance: metrics.imbalance.toFixed(3),
+      spotOIproxy: metrics.spotOIproxy.toFixed(6),
+      score: metrics.score.toFixed(3)
+    });
+  }
+
+  // Ordenar por score (melhores no topo)
+  data.sort((a, b) => b.score - a.score);
+
+  // Renderizar tabela
+  table.innerHTML = `
+    <tr>
+      <th>Mercado</th>
+      <th>Preço</th>
+      <th>Volume 24h</th>
+      <th>Depth ±0.2%</th>
+      <th>Imbalance</th>
+      <th>Spot OI Proxy</th>
+      <th>Score</th>
+    </tr>
+  `;
+
+  for (const d of data.slice(0, 20)) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${d.symbol}</td>
+      <td>${d.price}</td>
+      <td>${d.volume}</td>
+      <td>${d.depthNear}</td>
+      <td>${d.imbalance}</td>
+      <td>${d.spotOIproxy}</td>
+      <td><b>${d.score}</b></td>
+    `;
+    table.appendChild(row);
+  }
+
+  console.log("[SPOT] Atualizado", new Date().toLocaleTimeString(), "Top mercado:", data[0]?.symbol);
+}
+
+// --- Inicialização automática ---
+document.addEventListener("DOMContentLoaded", () => {
+  updateSpotTable();
+  setInterval(updateSpotTable, SPOT_UPDATE_INTERVAL);
+});
