@@ -1,3 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backpack Monitor</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+    color: #333;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { text-align: center; }
+  .tabs {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+  .tabs button {
+    padding: 10px 20px;
+    margin: 0 5px;
+    border: none;
+    background: #ddd;
+    cursor: pointer;
+    border-radius: 5px 5px 0 0;
+    font-weight: bold;
+  }
+  .tabs button.active { background: #fff; border-bottom: 2px solid #fff; }
+  .filters {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    gap: 5px;
+  }
+  .filters button {
+    padding: 5px 10px;
+    border: none;
+    background: #eee;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .filters button.active { background: #bbb; color: #fff; }
+  #info-box { text-align: center; margin-bottom: 10px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    box-shadow: 0 0 5px rgba(0,0,0,0.1);
+  }
+  th, td {
+    padding: 8px 5px;
+    text-align: center;
+    border-bottom: 1px solid #ccc;
+    font-size: 0.9rem;
+  }
+  th { background: #eee; cursor: pointer; }
+  tr.green { background: #d4f4d4; }
+  tr.red { background: #f4d4d4; }
+  tr.blue { background: #d4e0f4; }
+  tr.gray { background: #f4f4f4; }
+  tr.flash { animation: flash-bg 1s infinite alternate; }
+  @keyframes flash-bg {
+    0% { background-color: yellow; }
+    100% { background-color: inherit; }
+  }
+  .rsi-low { color: green; font-weight: bold; }
+  .rsi-mid { color: orange; font-weight: bold; }
+  .rsi-high { color: red; font-weight: bold; }
+  .atr-low { color: green; }
+  .atr-mid { color: orange; }
+  .atr-high { color: red; }
+  .network-tag {
+    display: inline-block;
+    margin: 2px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    border: 1px solid #aaa;
+  }
+  .net-ok { background: #d4f4d4; }
+  .net-off { background: #f4d4d4; }
+  .loading { text-align: center; font-style: italic; color: #666; }
+  @media (max-width: 768px) {
+    th, td { font-size: 0.8rem; padding: 4px 2px; }
+    .filters button { padding: 3px 6px; font-size: 0.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Backpack Monitor</h1>
+
+<div class="tabs">
+  <button id="tab-perp" class="active" onclick="switchTab('perp')">Perp</button>
+  <button id="tab-spot" onclick="switchTab('spot')">Spot</button>
+  <button id="tab-transfer" onclick="switchTab('transfer')">Transfer</button>
+</div>
+
+<div id="filters" class="filters">
+  <button id="btn-all" class="active" onclick="setFilter('all')">All</button>
+  <button id="btn-long" onclick="setFilter('long')">Long</button>
+  <button id="btn-short" onclick="setFilter('short')">Short</button>
+  <button id="btn-neutral" onclick="setFilter('neutral')">Neutral</button>
+  <button id="btn-liq" onclick="toggleLiquidity()">Ocultar sem liquidez</button>
+  <button id="btn-neutro" onclick="toggleNeutros()">Ocultar neutros</button>
+</div>
+
+<div id="info-box">Atualizando a cada 30 segundos. Clique nos cabeçalhos para ordenar.</div>
+
+<table id="tbl">
+  <thead>
+    <tr id="tbl-head">
+      <!-- Cabeçalho dinâmico -->
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="12" class="loading">Carregando...</td></tr>
+  </tbody>
+</table>
+
 <script>
 let currentTab = "perp";
 let currentFilter = "all";
@@ -14,8 +137,8 @@ function switchTab(tab){
   currentTab = tab;
   document.querySelectorAll(".tabs button").forEach(btn=>btn.classList.remove("active"));
   document.getElementById("tab-"+tab).classList.add("active");
-  document.getElementById("col-oi").style.display = (tab === "perp" ? "" : "none");
-  document.getElementById("filters").style.display = (tab === "transfer" ? "none" : "block");
+  document.getElementById("col-oi")?.style.display = (tab === "perp" ? "" : "none");
+  document.getElementById("filters").style.display = (tab === "transfer" ? "none" : "flex");
   document.getElementById("info-box").style.display = (tab === "transfer" ? "none" : "block");
   load();
 }
@@ -53,7 +176,7 @@ async function load(){
   try {
     const resp = await fetch(endpoint);
     const data = await resp.json();
-    if (id !== loadId) return; // ignora se aba mudou antes da resposta
+    if (id !== loadId) return;
     renderTable(data);
   } catch (e) {
     if (id === loadId)
@@ -66,7 +189,6 @@ function renderTable(data){
   const th=document.querySelector("#tbl-head tr");
   tb.innerHTML="";
 
-  // === Transfer ===
   if(currentTab==="transfer"){
     th.innerHTML=`<th>#</th><th>Ativo</th><th>Redes disponíveis</th>`;
     data.forEach((m,i)=>{
@@ -81,7 +203,6 @@ function renderTable(data){
     return;
   }
 
-  // === Cabeçalhos específicos ===
   if(currentTab==="spot"){
     th.innerHTML=`<th>#</th><th>Symbol</th><th>Preço</th><th>Volume 24h</th>
       <th>Depth ±0.2%</th><th>Imbalance</th><th>Spot OI Proxy</th><th>Score</th>`;
@@ -93,14 +214,12 @@ function renderTable(data){
     document.getElementById("col-oi").style.display=(currentTab==="perp"?"":"none");
   }
 
-  // === Filtros padrão ===
   if(currentFilter!=="all" && currentTab!=="spot")
     data=data.filter(m=>m.decision===currentFilter);
   if(hideNoLiquidity) data=data.filter(m=>m.volumeUSD>0 || m.volume>0);
   if(hideNeutros && currentTab!=="spot")
     data=data.filter(m=>m.decision!=="neutral");
 
-  // === Ordenação ===
   data.sort((a,b)=>{
     let va=a[sortKey],vb=b[sortKey];
     if(typeof va==="string"){va=va.toUpperCase();vb=vb.toUpperCase();}
@@ -109,7 +228,6 @@ function renderTable(data){
     return 0;
   });
 
-  // === Renderização ===
   data.forEach((m,i)=>{
     const tr=document.createElement("tr");
 
@@ -152,7 +270,6 @@ function renderTable(data){
   });
 }
 
-// === Ordenação por clique no cabeçalho ===
 document.querySelectorAll("th[data-key]").forEach(th=>{
   th.addEventListener("click",()=>{
     const key=th.getAttribute("data-key");
@@ -165,3 +282,6 @@ document.querySelectorAll("th[data-key]").forEach(th=>{
 load();
 setInterval(load,30000);
 </script>
+
+</body>
+</html>
