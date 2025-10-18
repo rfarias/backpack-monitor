@@ -1,287 +1,274 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Backpack Monitor</title>
-<style>
-  body {
-    font-family: Arial, sans-serif;
-    background: #f4f4f4;
-    color: #333;
-    margin: 0;
-    padding: 20px;
-  }
-  h1 { text-align: center; }
-  .tabs {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 10px;
-  }
-  .tabs button {
-    padding: 10px 20px;
-    margin: 0 5px;
-    border: none;
-    background: #ddd;
-    cursor: pointer;
-    border-radius: 5px 5px 0 0;
-    font-weight: bold;
-  }
-  .tabs button.active { background: #fff; border-bottom: 2px solid #fff; }
-  .filters {
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-    gap: 5px;
-  }
-  .filters button {
-    padding: 5px 10px;
-    border: none;
-    background: #eee;
-    cursor: pointer;
-    border-radius: 4px;
-  }
-  .filters button.active { background: #bbb; color: #fff; }
-  #info-box { text-align: center; margin-bottom: 10px; }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    background: #fff;
-    box-shadow: 0 0 5px rgba(0,0,0,0.1);
-  }
-  th, td {
-    padding: 8px 5px;
-    text-align: center;
-    border-bottom: 1px solid #ccc;
-    font-size: 0.9rem;
-  }
-  th { background: #eee; cursor: pointer; }
-  tr.green { background: #d4f4d4; }
-  tr.red { background: #f4d4d4; }
-  tr.blue { background: #d4e0f4; }
-  tr.gray { background: #f4f4f4; }
-  tr.flash { animation: flash-bg 1s infinite alternate; }
-  @keyframes flash-bg {
-    0% { background-color: yellow; }
-    100% { background-color: inherit; }
-  }
-  .rsi-low { color: green; font-weight: bold; }
-  .rsi-mid { color: orange; font-weight: bold; }
-  .rsi-high { color: red; font-weight: bold; }
-  .atr-low { color: green; }
-  .atr-mid { color: orange; }
-  .atr-high { color: red; }
-  .network-tag {
-    display: inline-block;
-    margin: 2px;
-    padding: 2px 5px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    border: 1px solid #aaa;
-  }
-  .net-ok { background: #d4f4d4; }
-  .net-off { background: #f4d4d4; }
-  .loading { text-align: center; font-style: italic; color: #666; }
-  @media (max-width: 768px) {
-    th, td { font-size: 0.8rem; padding: 4px 2px; }
-    .filters button { padding: 3px 6px; font-size: 0.8rem; }
-  }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backpack Analyzer</title>
+  <style>
+    body {
+      background: #0e1117;
+      color: #e6edf3;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      text-align: center;
+      margin: 20px 0;
+      color: #58a6ff;
+    }
+    .tabs, .filters {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin: 10px 0;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 5px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover {
+      background: #30363d;
+    }
+    button.active {
+      background: #238636;
+      color: #fff;
+    }
+    table {
+      width: 95%;
+      margin: 20px auto;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #30363d;
+      padding: 6px 8px;
+      text-align: center;
+    }
+    th {
+      background: #161b22;
+      cursor: pointer;
+    }
+    tr.green { background-color: rgba(0, 255, 0, 0.07); }
+    tr.red { background-color: rgba(255, 0, 0, 0.07); }
+    tr.blue { background-color: rgba(0, 128, 255, 0.07); }
+    tr.gray { background-color: rgba(128, 128, 128, 0.07); }
+    .loading { text-align: center; color: #999; }
+    .network-tag {
+      display: inline-block;
+      margin: 2px;
+      padding: 4px 6px;
+      border-radius: 5px;
+      font-size: 12px;
+      border: 1px solid #30363d;
+    }
+    .net-ok { background: rgba(46,160,67,0.2); }
+    .net-off { background: rgba(255,99,71,0.2); }
+    #info-box {
+      text-align: center;
+      color: #999;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .flash {
+      animation: flash 1s ease-in-out infinite alternate;
+    }
+    @keyframes flash {
+      from { background-color: rgba(255,255,0,0.2); }
+      to { background-color: rgba(255,255,0,0.05); }
+    }
+    .rsi-low { color: #00ff99; font-weight: bold; }
+    .rsi-high { color: #ff6666; font-weight: bold; }
+    .atr-low { color: #00ffaa; }
+    .atr-high { color: #ff9999; }
+  </style>
 </head>
 <body>
 
-<h1>Backpack Monitor</h1>
+  <h1>Backpack Analyzer</h1>
 
-<div class="tabs">
-  <button id="tab-perp" class="active" onclick="switchTab('perp')">Perp</button>
-  <button id="tab-spot" onclick="switchTab('spot')">Spot</button>
-  <button id="tab-transfer" onclick="switchTab('transfer')">Transfer</button>
-</div>
+  <div class="tabs">
+    <button id="tab-perp" class="active" onclick="switchTab('perp')">Perp</button>
+    <button id="tab-spot" onclick="switchTab('spot')">Spot</button>
+    <button id="tab-transfer" onclick="switchTab('transfer')">Transfer</button>
+  </div>
 
-<div id="filters" class="filters">
-  <button id="btn-all" class="active" onclick="setFilter('all')">All</button>
-  <button id="btn-long" onclick="setFilter('long')">Long</button>
-  <button id="btn-short" onclick="setFilter('short')">Short</button>
-  <button id="btn-neutral" onclick="setFilter('neutral')">Neutral</button>
-  <button id="btn-liq" onclick="toggleLiquidity()">Ocultar sem liquidez</button>
-  <button id="btn-neutro" onclick="toggleNeutros()">Ocultar neutros</button>
-</div>
+  <div id="filters" class="filters">
+    <button id="btn-all" class="active" onclick="setFilter('all')">Todos</button>
+    <button id="btn-long" onclick="setFilter('long')">Long</button>
+    <button id="btn-short" onclick="setFilter('short')">Short</button>
+    <button id="btn-lateral" onclick="setFilter('lateral')">Lateral</button>
+    <button id="btn-liq" onclick="toggleLiquidity()">Ocultar sem liquidez</button>
+    <button id="btn-neutro" onclick="toggleNeutros()">Ocultar neutros</button>
+  </div>
 
-<div id="info-box">Atualizando a cada 30 segundos. Clique nos cabeçalhos para ordenar.</div>
+  <div id="info-box">
+    Atualiza automaticamente a cada 30 segundos.
+  </div>
 
-<table id="tbl">
-  <thead>
-    <tr id="tbl-head">
-      <!-- Cabeçalho dinâmico -->
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td colspan="12" class="loading">Carregando...</td></tr>
-  </tbody>
-</table>
+  <table id="tbl">
+    <thead id="tbl-head"><tr></tr></thead>
+    <tbody></tbody>
+  </table>
 
-<script>
-let currentTab = "perp";
-let currentFilter = "all";
-let hideNoLiquidity = false;
-let hideNeutros = false;
-let sortKey = "score";
-let sortDir = "desc";
-let previousStates = {};
-let loadId = 0;
+  <script>
+    let currentTab = "perp";
+    let currentFilter = "all";
+    let hideNoLiquidity = false;
+    let hideNeutros = false;
+    let sortKey = "score";
+    let sortDir = "desc";
+    let previousStates = {};
+    let loadId = 0;
 
-const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+    const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-function switchTab(tab){
-  currentTab = tab;
-  document.querySelectorAll(".tabs button").forEach(btn=>btn.classList.remove("active"));
-  document.getElementById("tab-"+tab).classList.add("active");
-  document.getElementById("col-oi")?.style.display = (tab === "perp" ? "" : "none");
-  document.getElementById("filters").style.display = (tab === "transfer" ? "none" : "flex");
-  document.getElementById("info-box").style.display = (tab === "transfer" ? "none" : "block");
-  load();
-}
-
-function setFilter(f){
-  currentFilter=f;
-  document.querySelectorAll(".filters button").forEach(btn=>btn.classList.remove("active"));
-  document.getElementById("btn-"+f).classList.add("active");
-  load();
-}
-
-function toggleLiquidity(){
-  hideNoLiquidity=!hideNoLiquidity;
-  const btn=document.getElementById("btn-liq");
-  btn.classList.toggle("active",hideNoLiquidity);
-  btn.textContent=hideNoLiquidity?"Mostrar sem liquidez":"Ocultar sem liquidez";
-  load();
-}
-function toggleNeutros(){
-  hideNeutros=!hideNeutros;
-  const btn=document.getElementById("btn-neutro");
-  btn.classList.toggle("active",hideNeutros);
-  btn.textContent=hideNeutros?"Mostrar neutros":"Ocultar neutros";
-  load();
-}
-function rsiClass(rsi){if(rsi<=30)return"rsi-low";if(rsi>=70)return"rsi-high";return"rsi-mid";}
-function atrClass(atr){const atrPct=atr*100;if(atrPct<=0.3)return"atr-low";if(atrPct>=0.7)return"atr-high";return"atr-mid";}
-
-async function load(){
-  const id = ++loadId;
-  const endpoint = currentTab==="perp"?"/api/data":currentTab==="spot"?"/api/spot":"/api/transfer";
-  const tb=document.querySelector("#tbl tbody");
-  tb.innerHTML="<tr><td colspan='12' class='loading'>Carregando...</td></tr>";
-
-  try {
-    const resp = await fetch(endpoint);
-    const data = await resp.json();
-    if (id !== loadId) return;
-    renderTable(data);
-  } catch (e) {
-    if (id === loadId)
-      tb.innerHTML="<tr><td colspan='12' class='loading'>Erro ao carregar</td></tr>";
-  }
-}
-
-function renderTable(data){
-  const tb=document.querySelector("#tbl tbody");
-  const th=document.querySelector("#tbl-head tr");
-  tb.innerHTML="";
-
-  if(currentTab==="transfer"){
-    th.innerHTML=`<th>#</th><th>Ativo</th><th>Redes disponíveis</th>`;
-    data.forEach((m,i)=>{
-      const networks=(m.networks||[]).map(n=>`
-        <div class="network-tag ${n.deposit&&n.withdraw?'net-ok':'net-off'}">
-          ${n.chain||n.network} ${n.deposit?'✅':'❌'}Dep / ${n.withdraw?'✅':'❌'}Wdr
-        </div>`).join("");
-      const tr=document.createElement("tr");
-      tr.innerHTML=`<td>${i+1}</td><td>${m.symbol}</td><td>${networks||"-"}</td>`;
-      tb.appendChild(tr);
-    });
-    return;
-  }
-
-  if(currentTab==="spot"){
-    th.innerHTML=`<th>#</th><th>Symbol</th><th>Preço</th><th>Volume 24h</th>
-      <th>Depth ±0.2%</th><th>Imbalance</th><th>Spot OI Proxy</th><th>Score</th>`;
-  } else {
-    th.innerHTML=`<th>#</th><th data-key="symbol">Symbol</th><th data-key="lastPrice">Price</th>
-    <th data-key="atrRel">ATR%</th><th data-key="bbWidth">BB Width</th><th data-key="rsi">RSI</th>
-    <th data-key="volumeUSD">Volume</th><th data-key="oiUSD" id="col-oi">OI</th>
-    <th data-key="decision">Decisão</th><th data-key="score">Score</th>`;
-    document.getElementById("col-oi").style.display=(currentTab==="perp"?"":"none");
-  }
-
-  if(currentFilter!=="all" && currentTab!=="spot")
-    data=data.filter(m=>m.decision===currentFilter);
-  if(hideNoLiquidity) data=data.filter(m=>m.volumeUSD>0 || m.volume>0);
-  if(hideNeutros && currentTab!=="spot")
-    data=data.filter(m=>m.decision!=="neutral");
-
-  data.sort((a,b)=>{
-    let va=a[sortKey],vb=b[sortKey];
-    if(typeof va==="string"){va=va.toUpperCase();vb=vb.toUpperCase();}
-    if(va<vb)return sortDir==="asc"?-1:1;
-    if(va>vb)return sortDir==="asc"?1:-1;
-    return 0;
-  });
-
-  data.forEach((m,i)=>{
-    const tr=document.createElement("tr");
-
-    if(currentTab==="spot"){
-      tr.className="gray";
-      tr.innerHTML=`
-        <td>${i+1}</td>
-        <td>${m.symbol}</td>
-        <td>${m.price || "-"}</td>
-        <td>${m.volume || "-"}</td>
-        <td>${m.depthNear || "-"}</td>
-        <td>${m.imbalance || "-"}</td>
-        <td>${m.spotOIproxy || "-"}</td>
-        <td><b>${m.score || "-"}</b></td>`;
-    } else {
-      if(m.decision==="long")tr.className="green";
-      else if(m.decision==="short")tr.className="red";
-      else if(m.decision==="lateral")tr.className="blue";
-      else tr.className="gray";
-
-      if(previousStates[m.symbol] && previousStates[m.symbol]!=="neutral" && m.decision==="neutral"){
-        tr.classList.add("flash");
-        setTimeout(()=>tr.classList.remove("flash"),30000);
-      }
-      previousStates[m.symbol]=m.decision;
-
-      tr.innerHTML=`
-        <td>${i+1}</td>
-        <td>${m.symbol}</td>
-        <td>${m.lastPrice>0?usdFmt.format(m.lastPrice):"-"}</td>
-        <td class="${atrClass(m.atrRel||0)}">${m.lastPrice>0?(m.atrRel*100).toFixed(3)+"%":"-"}</td>
-        <td>${m.lastPrice>0?(m.bbWidth?.toFixed(4)||"-"):"-"}</td>
-        <td class="${rsiClass(m.rsi||0)}">${m.lastPrice>0?(m.rsi?.toFixed(1)||"-"):"-"}</td>
-        <td>${m.lastPrice>0?usdFmt.format(m.volumeUSD):"-"}</td>
-        ${currentTab==="perp"?`<td>${usdFmt.format(m.oiUSD||0)}</td>`:""}
-        <td>${m.decision?.toUpperCase()||"-"}</td>
-        <td>${m.score||0}</td>`;
+    function switchTab(tab){
+      currentTab = tab;
+      document.querySelectorAll(".tabs button").forEach(btn=>btn.classList.remove("active"));
+      document.getElementById("tab-"+tab).classList.add("active");
+      document.getElementById("col-oi")?.style && (document.getElementById("col-oi").style.display = (tab === "perp" ? "" : "none"));
+      document.getElementById("filters").style.display = (tab === "transfer" ? "none" : "flex");
+      document.getElementById("info-box").style.display = (tab === "transfer" ? "none" : "block");
+      load();
     }
-    tb.appendChild(tr);
-  });
-}
 
-document.querySelectorAll("th[data-key]").forEach(th=>{
-  th.addEventListener("click",()=>{
-    const key=th.getAttribute("data-key");
-    if(sortKey===key)sortDir=sortDir==="asc"?"desc":"asc";
-    else{sortKey=key;sortDir="desc";}
+    function setFilter(f){
+      currentFilter=f;
+      document.querySelectorAll(".filters button").forEach(btn=>btn.classList.remove("active"));
+      document.getElementById("btn-"+f).classList.add("active");
+      load();
+    }
+
+    function toggleLiquidity(){
+      hideNoLiquidity=!hideNoLiquidity;
+      const btn=document.getElementById("btn-liq");
+      btn.classList.toggle("active",hideNoLiquidity);
+      btn.textContent=hideNoLiquidity?"Mostrar sem liquidez":"Ocultar sem liquidez";
+      load();
+    }
+
+    function toggleNeutros(){
+      hideNeutros=!hideNeutros;
+      const btn=document.getElementById("btn-neutro");
+      btn.classList.toggle("active",hideNeutros);
+      btn.textContent=hideNeutros?"Mostrar neutros":"Ocultar neutros";
+      load();
+    }
+
+    function rsiClass(rsi){if(rsi<=30)return"rsi-low";if(rsi>=70)return"rsi-high";return"rsi-mid";}
+    function atrClass(atr){const atrPct=atr*100;if(atrPct<=0.3)return"atr-low";if(atrPct>=0.7)return"atr-high";return"atr-mid";}
+
+    async function load(){
+      const id = ++loadId;
+      const endpoint = currentTab==="perp"?"/api/data":currentTab==="spot"?"/api/spot":"/api/transfer";
+      const tb=document.querySelector("#tbl tbody");
+      tb.innerHTML="<tr><td colspan='12' class='loading'>Carregando...</td></tr>";
+
+      try {
+        const resp = await fetch(endpoint);
+        const data = await resp.json();
+        if (id !== loadId) return;
+        renderTable(data);
+      } catch (e) {
+        if (id === loadId)
+          tb.innerHTML="<tr><td colspan='12' class='loading'>Erro ao carregar</td></tr>";
+      }
+    }
+
+    function renderTable(data){
+      const tb=document.querySelector("#tbl tbody");
+      const th=document.querySelector("#tbl-head tr");
+      tb.innerHTML="";
+
+      if(currentTab==="transfer"){
+        th.innerHTML=`<th>#</th><th>Ativo</th><th>Redes disponíveis</th>`;
+        data.forEach((m,i)=>{
+          const networks=(m.networks||[]).map(n=>`
+            <div class="network-tag ${n.deposit&&n.withdraw?'net-ok':'net-off'}">
+              ${n.chain||n.network} ${n.deposit?'✅':'❌'}Dep / ${n.withdraw?'✅':'❌'}Wdr
+            </div>`).join("");
+          const tr=document.createElement("tr");
+          tr.innerHTML=`<td>${i+1}</td><td>${m.symbol}</td><td>${networks||"-"}</td>`;
+          tb.appendChild(tr);
+        });
+        return;
+      }
+
+      if(currentTab==="spot"){
+        th.innerHTML=`<th>#</th><th>Symbol</th><th>Preço</th><th>Volume 24h</th>
+          <th>Depth ±0.2%</th><th>Imbalance</th><th>Spot OI Proxy</th><th>Score</th>`;
+      } else {
+        th.innerHTML=`<th>#</th><th data-key="symbol">Symbol</th><th data-key="lastPrice">Price</th>
+        <th data-key="atrRel">ATR%</th><th data-key="bbWidth">BB Width</th><th data-key="rsi">RSI</th>
+        <th data-key="volumeUSD">Volume</th><th data-key="oiUSD" id="col-oi">OI</th>
+        <th data-key="decision">Decisão</th><th data-key="score">Score</th>`;
+      }
+
+      if(currentFilter!=="all" && currentTab!=="spot")
+        data=data.filter(m=>m.decision===currentFilter);
+      if(hideNoLiquidity) data=data.filter(m=>m.volumeUSD>0 || m.volume>0);
+      if(hideNeutros && currentTab!=="spot")
+        data=data.filter(m=>m.decision!=="neutral");
+
+      data.sort((a,b)=>{
+        let va=a[sortKey],vb=b[sortKey];
+        if(typeof va==="string"){va=va.toUpperCase();vb=vb.toUpperCase();}
+        if(va<vb)return sortDir==="asc"?-1:1;
+        if(va>vb)return sortDir==="asc"?1:-1;
+        return 0;
+      });
+
+      data.forEach((m,i)=>{
+        const tr=document.createElement("tr");
+
+        if(currentTab==="spot"){
+          tr.className="gray";
+          tr.innerHTML=`
+            <td>${i+1}</td>
+            <td>${m.symbol}</td>
+            <td>${m.price || "-"}</td>
+            <td>${m.volume || "-"}</td>
+            <td>${m.depthNear || "-"}</td>
+            <td>${m.imbalance || "-"}</td>
+            <td>${m.spotOIproxy || "-"}</td>
+            <td><b>${m.score || "-"}</b></td>`;
+        } else {
+          if(m.decision==="long")tr.className="green";
+          else if(m.decision==="short")tr.className="red";
+          else if(m.decision==="lateral")tr.className="blue";
+          else tr.className="gray";
+
+          if(previousStates[m.symbol] && previousStates[m.symbol]!=="neutral" && m.decision==="neutral"){
+            tr.classList.add("flash");
+            setTimeout(()=>tr.classList.remove("flash"),30000);
+          }
+          previousStates[m.symbol]=m.decision;
+
+          tr.innerHTML=`
+            <td>${i+1}</td>
+            <td>${m.symbol}</td>
+            <td>${m.lastPrice>0?usdFmt.format(m.lastPrice):"-"}</td>
+            <td class="${atrClass(m.atrRel||0)}">${m.lastPrice>0?(m.atrRel*100).toFixed(3)+"%":"-"}</td>
+            <td>${m.lastPrice>0?(m.bbWidth?.toFixed(4)||"-"):"-"}</td>
+            <td class="${rsiClass(m.rsi||0)}">${m.lastPrice>0?(m.rsi?.toFixed(1)||"-"):"-"}</td>
+            <td>${m.lastPrice>0?usdFmt.format(m.volumeUSD):"-"}</td>
+            ${currentTab==="perp"?`<td>${usdFmt.format(m.oiUSD||0)}</td>`:""}
+            <td>${m.decision?.toUpperCase()||"-"}</td>
+            <td>${m.score||0}</td>`;
+        }
+        tb.appendChild(tr);
+      });
+    }
+
     load();
-  });
-});
-
-load();
-setInterval(load,30000);
-</script>
-
+    setInterval(load,30000);
+  </script>
 </body>
 </html>
