@@ -29,11 +29,31 @@ export default async function handler(req, res) {
     const out = [];
 
     const fetchK = async (symbol, interval = "3m", limit = 200) => {
-      const r = await fetch(`${baseUrl}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
-      if (!r.ok) return [];
-      const arr = await r.json();
-      return Array.isArray(arr) ? arr : [];
+      try {
+        const resp = await fetch(`${baseUrl}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+        if (!resp.ok) {
+          console.log(`⚠️ Falha ao buscar klines ${symbol}:`, resp.status);
+          return [];
+        }
+        const data = await resp.json();
+        // A Backpack retorna array plano
+        if (Array.isArray(data)) {
+          return data.map(c => ({
+            open: +c.open,
+            high: +c.high,
+            low: +c.low,
+            close: +c.close,
+            volume: +c.volume,
+            openTime: +c.openTime
+          }));
+        }
+        return [];
+      } catch (e) {
+        console.log(`❌ Erro klines ${symbol}:`, e.message);
+        return [];
+      }
     };
+
 
     for (let i = 0; i < perp.length; i += batchSize) {
       const batch = perp.slice(i, i + batchSize);
