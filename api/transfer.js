@@ -1,10 +1,9 @@
+// /api/transfer.js
 import axios from "axios";
 
 export default async function handler(req, res) {
   try {
     const resp = await axios.get("https://api.backpack.exchange/api/v1/assets");
-    console.log("Status /assets:", resp.status);
-
     const assets = resp.data || [];
 
     const formatted = assets.map(a => ({
