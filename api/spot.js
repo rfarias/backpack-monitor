@@ -1,122 +1,232 @@
-// /api/spot.js
-export default async function handler(req, res) {
-  const baseUrl = "https://api.backpack.exchange/api/v1";
+import fetch from "node-fetch";
 
-  // cache 30s
-  if (!global.__spotCache) global.__spotCache = { at: 0, data: [] };
-  const now = Date.now();
-  if (now - global.__spotCache.at < 30_000 && global.__spotCache.data.length) {
-    return res.status(200).json(global.__spotCache.data);
+const BASE_URL = "https://api.backpack.exchange/api/v1";
+const UPDATE_INTERVAL = 180000;
+const MAX_CONCURRENT = 5;
+
+let cache = { ts: 0, data: [] };
+
+// === Funções auxiliares ===
+const mean = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+const std = arr => {
+  if (arr.length < 2) return 0;
+  const m = mean(arr);
+  return Math.sqrt(arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1));
+};
+
+const computeATR = (highs, lows, closes, period = 14) => {
+  if (closes.length < 2) return 0;
+  const trs = [];
+  for (let i = 1; i < highs.length; i++) {
+    const tr = Math.max(
+      highs[i] - lows[i],
+      Math.abs(highs[i] - closes[i - 1]),
+      Math.abs(lows[i] - closes[i - 1])
+    );
+    trs.push(tr);
   }
+  return mean(trs.slice(-period));
+};
 
+const computeRSI = (closes, period = 9) => {
+  if (closes.length <= period) return 50;
+  const deltas = closes.slice(1).map((c, i) => c - closes[i]);
+  const gains = deltas.map(d => (d > 0 ? d : 0));
+  const losses = deltas.map(d => (d < 0 ? Math.abs(d) : 0));
+  const avgGain = mean(gains.slice(-period));
+  const avgLoss = mean(losses.slice(-period)) || 1e-9;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+};
+
+const computeBollinger = (closes, period = 20, mult = 2) => {
+  if (!closes.length) return { middle: 0, width: 0 };
+  const slice = closes.slice(-period);
+  const m = mean(slice);
+  const s = std(slice);
+  return { middle: m, width: (2 * mult * s) / (m || 1) };
+};
+
+const computeEMA = (closes, period = 20) => {
+  if (closes.length < period) return mean(closes);
+  const k = 2 / (period + 1);
+  let ema = closes[0];
+  for (let i = 1; i < closes.length; i++) {
+    ema = closes[i] * k + ema * (1 - k);
+  }
+  return ema;
+};
+
+const fetchKlines = async (symbol, interval = "15m", limit = 200) => {
+  const intervalSec = interval.endsWith("m") ? +interval.replace("m", "") * 60 : 1800;
   try {
-    // lista de símbolos spot (filtra *_USDC)
-    const tickersRes = await fetch(`${baseUrl}/tickers`);
-    if (!tickersRes.ok) throw new Error("Falha /tickers");
-    const tickers = await tickersRes.json();
-    const markets = (tickers || []).filter(t => t.symbol.endsWith("_USDC"));
-
-    const batchSize = 5;
-    const out = [];
-
-    const fetchK = async (symbol, interval = "3m", limit = 200) => {
-      try {
-        const resp = await fetch(`${baseUrl}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
-        if (!resp.ok) {
-          console.log(`⚠️ Falha ao buscar klines ${symbol}:`, resp.status);
-          return [];
-        }
-        const data = await resp.json();
-        // A Backpack retorna array plano
-        if (Array.isArray(data)) {
-          return data.map(c => ({
-            open: +c.open,
-            high: +c.high,
-            low: +c.low,
-            close: +c.close,
-            volume: +c.volume,
-            openTime: +c.openTime
-          }));
-        }
-        return [];
-      } catch (e) {
-        console.log(`❌ Erro klines ${symbol}:`, e.message);
-        return [];
+    const nowSec = Math.floor(Date.now() / 1000);
+    const startSec = nowSec - limit * intervalSec;
+    const url = `${BASE_URL}/klines?symbol=${symbol}&interval=${interval}&startTime=${startSec}&endTime=${nowSec}&limit=${limit}`;
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map(c => ({
+          open: +c.open,
+          high: +c.high,
+          low: +c.low,
+          close: +c.close,
+          volume: +c.volume,
+          ts: +c.openTime
+        }));
       }
-    };
+    }
+  } catch (e) {
+    console.log(`⚠️ klines falhou ${symbol}: ${e.message}`);
+  }
+  return [];
+};
 
+// === Handler principal ===
+export default async function handler(req, res) {
+  try {
+    const now = Date.now();
 
-    for (let i = 0; i < markets.length; i += batchSize) {
-      const batch = markets.slice(i, i + batchSize);
-      const partial = await Promise.all(batch.map(async t => {
-        try {
-          // ticker individual p/ preço/volume mais confiável
-          const tRes = await fetch(`${baseUrl}/ticker?symbol=${t.symbol}`);
-          if (!tRes.ok) throw new Error(`Falha /ticker ${t.symbol}`);
-          const tk = await tRes.json();
-          const lastPrice = parseFloat(tk?.lastPrice) || 0;
-          const volumeUSD = (parseFloat(tk?.volume) || 0) * lastPrice;
-
-          let kl = await fetchK(t.symbol, "3m", 200);
-          if (kl.length < 15) kl = await fetchK(t.symbol, "5m", 200);
-          if (kl.length < 15) return { symbol: t.symbol, error: "sem dados suficientes" };
-
-          const closes = kl.map(k => +k.close);
-          const highs  = kl.map(k => +k.high);
-          const lows   = kl.map(k => +k.low);
-
-          // RSI(14)
-          let gains = 0, losses = 0;
-          for (let i = 1; i < 15; i++) {
-            const d = closes[i] - closes[i-1];
-            if (d > 0) gains += d; else losses += -d;
-          }
-          const avgGain = gains / 14;
-          const avgLoss = (losses / 14) || 1e-9;
-          const rs = avgGain / avgLoss;
-          const rsi = 100 - 100 / (1 + rs);
-
-          // ATR(14)
-          const trs = highs.map((h, i) =>
-            Math.max(h - lows[i], Math.abs(h - (closes[i-1] ?? h)), Math.abs(lows[i] - (closes[i-1] ?? lows[i])))
-          );
-          const atr = trs.slice(-14).reduce((a,b)=>a+b,0) / 14;
-          const atrRel = lastPrice ? atr / lastPrice : 0;
-
-          // BB(20)
-          const s = closes.slice(-20);
-          const mean = s.reduce((a,b)=>a+b,0) / s.length;
-          const std = Math.sqrt(s.reduce((a,b)=>a + (b-mean)**2, 0) / s.length);
-          const bbWidth = (2 * std) / (mean || 1);
-
-          // decisão/score (mesma lógica do perp, sem OI)
-          let decision = "neutral";
-          if (rsi <= 30 && atrRel < 0.006) decision = "long";
-          else if (rsi >= 70 && atrRel < 0.006) decision = "short";
-          else if (atrRel <= 0.004) decision = "lateral";
-          const score = Math.round((100 - Math.abs(50 - rsi)) * (1 - Math.min(atrRel * 100, 1)));
-
-          return {
-            symbol: t.symbol,
-            lastPrice,          // <-- para o HTML ler corretamente
-            volumeUSD,          // <-- idem
-            rsi,
-            atrRel,
-            bbWidth,
-            decision,
-            score
-          };
-        } catch (e) {
-          return { symbol: t.symbol, error: e.message };
-        }
-      }));
-      out.push(...partial);
+    if (now - cache.ts < UPDATE_INTERVAL && cache.data.length > 0) {
+      return res.status(200).json(cache.data);
     }
 
-    global.__spotCache = { at: Date.now(), data: out };
-    return res.status(200).json(out);
-  } catch (err) {
-    console.error("Erro /api/spot:", err.message);
-    return res.status(500).json({ error: "Erro ao carregar dados Spot" });
+    const marketsResp = await fetch(`${BASE_URL}/markets`);
+    const markets = (await marketsResp.json()) || [];
+    const spotMarkets = markets.filter(m => !m.symbol.endsWith("_PERP"));
+
+    const results = [];
+    const active = [];
+
+    for (const m of spotMarkets) {
+      const run = async () => {
+        let lastPrice = 0, volumeUSD = 0, marketCapUSD = 0;
+        let atrRel = 0, rsi = 0, bbWidth = 0, ema20 = 0;
+        let spreadPct = 0, liquidityScore = 0;
+        let decision = "aguardando", score = 0;
+        let isNew = false, isAbandoned = false;
+
+        const isMarginable = Boolean(m.marginEnabled);
+        const maxLeverage = Number(m.maxLeverage || 0);
+
+
+        try {
+          let ticker = {};
+          try {
+            const tickerResp = await fetch(`${BASE_URL}/ticker?symbol=${m.symbol}`);
+            if (tickerResp.ok) ticker = await tickerResp.json();
+          } catch {}
+
+          lastPrice = +ticker.lastPrice || 0;
+          const vol = +ticker.volume || 0;
+          volumeUSD = vol * lastPrice;
+
+          const bid = +ticker.bid || 0;
+          const ask = +ticker.ask || 0;
+          spreadPct = (bid > 0 && ask > 0)
+            ? ((ask - bid) / ((ask + bid) / 2)) * 100
+            : 0;
+
+          marketCapUSD = (volumeUSD > 0 && lastPrice > 0) ? volumeUSD * 24 : 0;
+          liquidityScore = spreadPct > 0 ? (volumeUSD / (spreadPct * 100)) : volumeUSD;
+
+          // Escolha dinâmica de intervalos
+          let kl;
+          if (isMarginable) {
+            kl = await fetchKlines(m.symbol, "5m", 200);
+            if (!kl || kl.length < 20)
+              kl = await fetchKlines(m.symbol, "15m", 200);
+          } else {
+            kl = await fetchKlines(m.symbol, "30m", 200);
+            if (!kl || kl.length < 20)
+              kl = await fetchKlines(m.symbol, "1h", 200);
+          }
+
+          const hadCandles = kl && kl.length > 0;
+          const closes = kl.map(k => k.close);
+          const highs = kl.map(k => k.high);
+          const lows = kl.map(k => k.low);
+
+          if (hadCandles && lastPrice > 0 && volumeUSD > 0) {
+            const atr = computeATR(highs, lows, closes);
+            atrRel = lastPrice ? atr / lastPrice : 0;
+            rsi = computeRSI(closes);
+            bbWidth = computeBollinger(closes).width;
+            ema20 = computeEMA(closes);
+
+            const hasIndicators = atrRel > 0 && rsi > 0 && bbWidth > 0;
+
+            if (!hasIndicators) {
+              decision = "aguardando"; score = 0;
+            } else if (rsi < 30 && lastPrice > ema20) {
+              decision = "long"; score = 2;
+            } else if (rsi > 70 && lastPrice < ema20) {
+              decision = "short"; score = -2;
+            } else if (atrRel < 0.005) {
+              decision = "lateral"; score = 1;
+            } else {
+              decision = "neutral"; score = 0;
+            }
+
+          } else {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const createdAt = Math.floor(+new Date(m.createdAt || 0) / 1000);
+            const ageDays = (nowSec - createdAt) / 86400;
+            const noData = !volumeUSD;
+            const noKlines = !kl || kl.length === 0;
+
+            if (noData && noKlines && ageDays <= 60) isNew = true;
+            else if (hadCandles && volumeUSD === 0) isAbandoned = true;
+            decision = "aguardando";
+          }
+        } catch (err) {
+          console.log(`⚠️ Erro ${m.symbol}: ${err.message}`);
+          decision = "aguardando";
+        }
+
+        results.push({
+          symbol: m.symbol,
+          lastPrice,
+          atrRel,
+          rsi,
+          bbWidth,
+          ema20,
+          volumeUSD,
+          marketCapUSD,
+          spreadPct,
+          liquidityScore,
+          decision,
+          score,
+          isMarginable,
+          maxLeverage,
+          isNew,
+          isAbandoned
+        });
+      };
+
+      active.push(run());
+      if (active.length >= MAX_CONCURRENT) {
+        await Promise.all(active.splice(0, MAX_CONCURRENT));
+      }
+    }
+
+    await Promise.all(active);
+
+    results.sort((a, b) => {
+      if (a.isNew && !b.isNew) return -1;
+      if (!a.isNew && b.isNew) return 1;
+      if (a.isAbandoned && !b.isAbandoned) return 1;
+      if (!a.isAbandoned && b.isAbandoned) return -1;
+      if (a.isMarginable && !b.isMarginable) return -1;
+      if (!a.isMarginable && b.isMarginable) return 1;
+      return b.liquidityScore - a.liquidityScore;
+    });
+
+    cache = { ts: now, data: results };
+    res.status(200).json(results);
+  } catch (e) {
+    console.error("Erro geral /api/spot:", e.message);
+    res.status(500).json({ error: e.message });
   }
 }

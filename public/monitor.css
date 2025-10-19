@@ -1,0 +1,49 @@
+/* === MONITOR DE DEPÓSITOS / WITHDRAW === */
+.network-row {
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 3px solid #2e6ff2;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 5px;
+  transition: all 0.2s ease;
+}
+
+.network-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.network-name {
+  font-weight: 600;
+  color: #a9c2ff;
+}
+
+.net-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  margin-left: 6px;
+  color: #fff;
+}
+
+.net-badge.deposit {
+  background: #00c46b;
+}
+
+.net-badge.withdraw {
+  background: #ff4d4d;
+}
+
+.net-badge.inactive {
+  background: #555;
+}
+
+.expandable {
+  cursor: pointer;
+  color: #89b4ff;
+  text-decoration: underline;
+}
+
+.expandable:hover {
+  color: #cde3ff;
+}
