@@ -12,6 +12,36 @@ h1 {
   margin-bottom: 15px;
 }
 
+/* === CABEÇALHO === */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: linear-gradient(90deg, #10141f, #131929);
+  border-bottom: 1px solid #2c3348;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.header h1 {
+  font-size: 1.6rem;
+  color: #f8f8f8;
+  letter-spacing: 0.5px;
+}
+
+.logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: contain;
+  background-color: #000;
+  box-shadow: 0 0 8px rgba(255, 0, 0, 0.4);
+  transition: transform 0.2s ease;
+}
+.logo:hover { transform: scale(1.1); }
+
 /* === TABELA === */
 #tbl {
   width: 100%;
@@ -28,7 +58,6 @@ h1 {
   padding: 10px 12px;
   border-bottom: 2px solid #1f2e4a;
   cursor: pointer;
-  position: relative;
 }
 
 #tbl tbody td {
@@ -37,44 +66,42 @@ h1 {
   transition: background 0.25s;
 }
 
-#tbl tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.02);
-}
-#tbl tbody tr:hover td {
-  background: rgba(255, 255, 255, 0.05);
-}
+#tbl tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+#tbl tbody tr:hover td { background: rgba(255, 255, 255, 0.05); }
 
-/* === LINHAS COLORIDAS === */
-tr.green td {
-  color: #00ff87;
-  background: rgba(0, 255, 135, 0.08);
-}
-tr.red td {
-  color: #ff6666;
-  background: rgba(255, 0, 0, 0.08);
-}
-tr.blue td {
-  color: #6fc3ff;
-  background: rgba(0, 120, 255, 0.08);
-}
+/* === STATUS E DECISÕES === */
+tr.green  { background-color: rgba(0, 255, 120, 0.15); }
+tr.red    { background-color: rgba(255, 80, 80, 0.15); }
+tr.blue   { background-color: rgba(0, 180, 255, 0.15); }
+tr.gray   { background-color: rgba(180, 180, 180, 0.15); }
+
+tr.green td,
+tr.red td,
+tr.blue td,
 tr.gray td {
-  color: #ccc;
+  color: #f2f2f2;
 }
 
-/* === NOVOS === */
-tr.new td {
-  background: linear-gradient(90deg, rgba(255, 214, 102, 0.15) 0%, rgba(255, 214, 102, 0.05) 100%);
-  color: #ffd166;
-  border-left: 4px solid #ffcc55;
+tr.upcoming td {
+  background-color: #1a2735;
+  color: #ffc107;
   font-weight: 600;
 }
-tr.new td:first-child::before {
-  content: "🟡";
-  margin-right: 6px;
-  font-size: 16px;
+tr.upcoming:hover td { background-color: #223448; }
+
+tr.new td {
+  background-color: #132a1f;
+  color: #4efc7f;
+  font-weight: 600;
+}
+tr.new:hover td { background-color: #184f33; }
+
+.status-badge {
+  font-size: 0.9em;
+  margin-left: 6px;
+  opacity: 0.85;
 }
 
-/* === ABANDONADOS === */
 tr.abandoned td {
   color: #888;
   background: rgba(60, 60, 60, 0.2);
@@ -86,14 +113,67 @@ tr.abandoned td:first-child::before {
   font-size: 16px;
 }
 
-.atr-low { color: #00ff6a; font-weight: 600; }
-.atr-mid { color: #ffdd59; font-weight: 600; }
-.atr-high { color: #ff4d4d; font-weight: 600; }
+/* === INDICADORES === */
+.atr-low  { color: #00ff6a !important; font-weight: 600; }
+.atr-mid  { color: #ffdd59 !important; font-weight: 600; }
+.atr-high { color: #ff4d4d !important; font-weight: 600; }
 
-.rsi-low { color: #00ff6a; font-weight: 600; }
-.rsi-mid { color: #ccc; }
-.rsi-high { color: #ff4d4d; font-weight: 600; }
+.rsi-low  { color: #00ff6a !important; font-weight: 600; }
+.rsi-mid  { color: #ccc !important;    font-weight: 600; }
+.rsi-high { color: #ff4d4d !important; font-weight: 600; }
 
+.bb-low   { color: #00ff6a !important; font-weight: 500; }
+.bb-mid   { color: #ffdd59 !important; font-weight: 500; }
+.bb-high  { color: #ff4d4d !important; font-weight: 500; }
+
+/* === BOTÕES === */
+.filters, .tabs { margin-bottom: 12px; }
+
+.filters button, .tabs button {
+  background: #162338;
+  color: #ccc;
+  border: none;
+  padding: 8px 14px;
+  margin-right: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.filters button:hover, .tabs button:hover { background: #264065; }
+.filters button.active, .tabs button.active {
+  background: #2e6ff2;
+  color: #fff;
+}
+
+#lastUpdate {
+  margin-left: 15px;
+  color: #a9c2ff;
+  font-size: 14px;
+}
+
+/* === TRANSFERÊNCIAS === */
+.transfer-main {
+  background-color: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+  color: #fff;
+}
+.transfer-chain {
+  background-color: rgba(255, 255, 255, 0.02);
+  font-size: 0.9em;
+}
+.transfer-chain .chain {
+  color: #ccc;
+  font-weight: 500;
+}
+.transfer-main td,
+.transfer-chain td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.transfer-main:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
 
 /* === TOOLTIP === */
 th[title]:hover::after, td[title]:hover::after {
@@ -112,54 +192,3 @@ th[title]:hover::after, td[title]:hover::after {
   box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4);
   z-index: 50;
 }
-
-/* === BOTÕES === */
-.filters, .tabs {
-  margin-bottom: 12px;
-}
-
-.filters button, .tabs button {
-  background: #162338;
-  color: #ccc;
-  border: none;
-  padding: 8px 14px;
-  margin-right: 6px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.filters button:hover, .tabs button:hover {
-  background: #264065;
-}
-
-.filters button.active, .tabs button.active {
-  background: #2e6ff2;
-  color: #fff;
-}
-
-#lastUpdate {
-  margin-left: 15px;
-  color: #a9c2ff;
-  font-size: 14px;
-}
-
-/* ——— Força as cores dos indicadores mesmo quando a linha tem cor própria ——— */
-tbody tr td.atr-low,
-tbody tr td.atr-mid,
-tbody tr td.atr-high,
-tbody tr td.rsi-low,
-tbody tr td.rsi-mid,
-tbody tr td.rsi-high {
-  font-weight: 600;
-  color: inherit; /* base */
-}
-
-/* Cores finais com prioridade sobre .green/.red/.blue/.gray */
-tbody tr td.atr-low     { color: #00ff6a !important; }  /* ≤ 0.3% */
-tbody tr td.atr-mid     { color: #ffdd59 !important; }  /* 0.3–0.7% */
-tbody tr td.atr-high    { color: #ff4d4d !important; }  /* ≥ 0.7% */
-
-tbody tr td.rsi-low     { color: #00ff6a !important; }  /* ≤ 30 */
-tbody tr td.rsi-mid     { color: #cccccc !important; }  /* 31–69 */
-tbody tr td.rsi-high    { color: #ff4d4d !important; }  /* ≥ 70 */

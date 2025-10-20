@@ -47,3 +47,43 @@
 .expandable:hover {
   color: #cde3ff;
 }
+
+.transfer-main {
+  background-color: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
+  color: #fff;
+}
+
+.transfer-chain {
+  background-color: rgba(255, 255, 255, 0.02);
+  font-size: 0.9em;
+}
+
+.transfer-chain td,
+.transfer-main td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.transfer-chain td:nth-child(3) {
+  color: #ccc;
+  font-weight: 500;
+}
+
+.net-badge {
+  font-size: 0.8em;
+  opacity: 0.8;
+  margin-left: 6px;
+}
+
+.transfer-main:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+tr.upcoming {
+  background-color: #2e2e2e;
+  color: #f0d060;
+}
+tr.new {
+  background-color: #3b2e00;
+  color: #ffd966;
+}

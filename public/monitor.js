@@ -1,6 +1,9 @@
 // === monitor.js ===
-// Controla abas, filtros e atualização de dados
-// Versão aprimorada com tooltips explicativas e nomes corrigidos
+// Atualizado: status direto da API Backpack + cache local leve + DEBUG de classificação
+// "Em breve" = visible=false & orderBookState=PostOnly
+// "Novo" = visible=true & orderBookState=PostOnly
+// "Normal" = visible=true & orderBookState=Open
+// Adicionado: seleção de timeframe e atualização suave
 
 import { renderTransfer } from "./monitorTransfer.js";
 
@@ -11,23 +14,55 @@ let currentTab = "perp",
   sortKey = "score",
   sortDir = "desc",
   loadId = 0,
-  cachedData = [];
+  cachedData = [],
+  currentTimeframe = "3m"; // 🕒 timeframe padrão
 
 const usdFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 });
 
+// ======== FORMATOS ========
 function fmtTime(ts) {
   if (!ts) return "";
   const d = new Date(+ts);
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+// ======== CLASSIFICAÇÃO ========
+function classifyMarket(m) {
+  if (!m) return "normal";
+
+  // Garante que não tenha problema de tipo string vs boolean
+  const vis =
+    m.visible === true || m.visible === "true" || m.visible === 1 || m.visible === "1";
+  const state = (m.orderBookState || "").toLowerCase();
+
+  if (!vis && state === "closed") return "normal"; // deslistado
+  if (!vis && state === "postonly") return "upcoming"; // em breve
+  if (vis && state === "postonly") return "new"; // novo
+  if (vis && state === "open") return "normal"; // ativo
+  return "normal";
+}
+
+// ======== DEBUG ========
+function debugMarketStatus(data) {
+  console.groupCollapsed("🔍 Verificação de status de mercados");
+  data.forEach(m => {
+    const status = classifyMarket(m);
+    console.log(
+      `${m.symbol}: visible=${m.visible}, orderBookState=${m.orderBookState} → ${status}`
+    );
+  });
+  console.groupEnd();
+}
+
 // ======== FILTROS ========
 export function setFilter(f) {
   currentFilter = f;
-  document.querySelectorAll(".filters button").forEach(btn => btn.classList.remove("active"));
+  document.querySelectorAll(".filters button").forEach(btn =>
+    btn.classList.remove("active")
+  );
   const btn = document.getElementById("btn-" + f);
   if (btn) btn.classList.add("active");
   if (currentTab !== "transfer") renderTable(cachedData);
@@ -37,7 +72,9 @@ export function toggleLiquidity() {
   hideNoLiquidity = !hideNoLiquidity;
   const btn = document.getElementById("btn-liq");
   btn.classList.toggle("active", hideNoLiquidity);
-  btn.textContent = hideNoLiquidity ? "Mostrar sem liquidez" : "Ocultar sem liquidez";
+  btn.textContent = hideNoLiquidity
+    ? "Mostrar sem liquidez"
+    : "Ocultar sem liquidez";
   if (currentTab !== "transfer") renderTable(cachedData);
 }
 
@@ -57,7 +94,6 @@ function atrClass(atr) {
   if (val < 0.7) return "atr-mid";
   return "atr-high";
 }
-
 function rsiClass(rsi) {
   const val = parseFloat(rsi);
   if (isNaN(val)) return "";
@@ -65,59 +101,74 @@ function rsiClass(rsi) {
   if (val >= 70) return "rsi-high";
   return "rsi-mid";
 }
+function bbClass(bb) {
+  if (bb < 0.01) return "bb-low";
+  if (bb < 0.03) return "bb-mid";
+  return "bb-high";
+}
 
 // ======== ATUALIZAÇÃO ========
 export async function load(force = false, auto = false) {
   const id = ++loadId;
   const endpoint =
     currentTab === "perp"
-      ? "/api/data"
+      ? `/api/data?tf=${currentTimeframe}`
       : currentTab === "spot"
-      ? "/api/spot"
+      ? `/api/spot?tf=${currentTimeframe}`
       : "/api/transfer";
 
   const tb = document.querySelector("#tbl tbody");
-  const cacheKey = "cache_" + currentTab,
-    cacheTimeKey = cacheKey + "_time";
   const last = document.getElementById("lastUpdate");
-  if (auto) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
 
-  const cached = localStorage.getItem(cacheKey);
-  if (cached && !force) {
+  const cacheKey = "cache_" + currentTab;
+  const cacheTimeKey = cacheKey + "_time";
+
+  // 🔸 Usa cache enquanto carrega (sem piscar)
+  if (!force && localStorage.getItem(cacheKey)) {
     try {
-      cachedData = JSON.parse(cached);
+      cachedData = JSON.parse(localStorage.getItem(cacheKey));
       renderActiveTab();
-      last.textContent = "Atualizado às " + fmtTime(localStorage.getItem(cacheTimeKey));
+      last.textContent =
+        "Atualizado às " + fmtTime(localStorage.getItem(cacheTimeKey));
     } catch {}
-  } else if (!auto) {
-    tb.innerHTML = "<tr><td colspan='10' class='loading'>Carregando...</td></tr>";
   }
+
+  if (auto) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
 
   try {
     const resp = await fetch(endpoint);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
     if (id !== loadId) return;
+
     if (Array.isArray(data) && data.length > 0) {
       cachedData = data;
       localStorage.setItem(cacheKey, JSON.stringify(data));
       const ts = Date.now();
       localStorage.setItem(cacheTimeKey, ts);
+
+      // 🧩 Logar no console a classificação
+      debugMarketStatus(data);
+
       renderActiveTab();
       last.textContent = "Atualizado às " + fmtTime(ts);
     }
   } catch (e) {
     console.warn("Erro ao atualizar:", e.message);
-    if (!cached)
-      tb.innerHTML = "<tr><td colspan='10' class='loading'>Erro ao carregar</td></tr>";
-    last.innerHTML = '<span style="color:#f66">⚠️ Falha na atualização</span>';
+    if (!cachedData || cachedData.length === 0)
+      tb.innerHTML =
+        "<tr><td colspan='10' class='loading'>Erro ao carregar</td></tr>";
+    last.innerHTML =
+      '<span style="color:#f66">⚠️ Falha na atualização</span>';
   }
 }
 
 // ======== TABS ========
 export function switchTab(tab) {
   currentTab = tab;
-  document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+  document
+    .querySelectorAll(".tabs button")
+    .forEach(b => b.classList.remove("active"));
   document.getElementById("tab-" + tab).classList.add("active");
 
   const show = tab !== "transfer";
@@ -125,12 +176,12 @@ export function switchTab(tab) {
   document.getElementById("info-box").style.display = show ? "block" : "none";
 
   const showBtn = show ? "inline-block" : "none";
-  ["neutro", "liq", "long", "short", "lateral", "neutral"].forEach(id =>
-    (document.getElementById("btn-" + id).style.display = showBtn)
+  ["neutro", "liq", "long", "short", "lateral", "neutral"].forEach(
+    id => (document.getElementById("btn-" + id).style.display = showBtn)
   );
-  document.getElementById("btn-new").style.display = tab === "transfer" ? "inline-block" : "none";
+  document.getElementById("btn-new").style.display =
+    tab === "transfer" ? "inline-block" : "none";
 
-  cachedData = [];
   load(false);
 }
 
@@ -150,83 +201,122 @@ function renderTable(data) {
     th = document.querySelector("#tbl-head");
   tb.innerHTML = "";
 
-  const label = currentTab === "perp" ? "Open Interest 💥" : "MarketCap / Spread 💧";
+  const label =
+    currentTab === "perp" ? "Open Interest 💥" : "MarketCap / Spread 💧";
   th.innerHTML = `<tr>
       <th>#</th>
-      <th data-key="symbol" title="Ativo monitorado na Backpack Exchange">Symbol</th>
-      <th data-key="lastPrice" title="Último preço de negociação (USD)">Preço (USD)</th>
-      <th data-key="atrRel" title="ATR%: volatilidade relativa do ativo">ATR%</th>
-      <th data-key="bbWidth" title="BB Width: largura das Bandas de Bollinger">BB Width</th>
-      <th data-key="rsi" title="RSI: Força Relativa (≤30 sobrevendido, ≥70 sobrecomprado)">RSI</th>
-      <th data-key="volumeUSD" title="Volume em USD (últimas 24h)">Volume</th>
-      <th data-key="${currentTab === "perp" ? "oiUSD" : "liquidityScore"}" 
-          title="${currentTab === "perp"
-            ? "Open Interest total em contratos perpétuos"
-            : "MarketCap + Spread e Score de Liquidez"}">${label}</th>
-      <th data-key="decision" title="Sinal do modelo: LONG, SHORT, LATERAL ou NEUTRO">Decisão</th>
-      <th data-key="score" title="Score de confiança do sinal">Score</th>
+      <th data-key="symbol">Symbol</th>
+      <th data-key="lastPrice">Preço</th>
+      <th data-key="atrRel">ATR%</th>
+      <th data-key="bbWidth">BB Width</th>
+      <th data-key="rsi">RSI</th>
+      <th data-key="volumeUSD">Volume</th>
+      <th data-key="${currentTab === "perp" ? "oiUSD" : "liquidityScore"}">${label}</th>
+      <th data-key="decision">Decisão</th>
+      <th data-key="score">Score</th>
     </tr>`;
 
   let filtered = [...data];
-  if (currentFilter !== "all") filtered = filtered.filter(m => m.decision === currentFilter);
+  if (currentFilter === "new")
+    filtered = filtered.filter(m => classifyMarket(m) === "new");
+  else if (currentFilter !== "all")
+    filtered = filtered.filter(m => m.decision === currentFilter);
+
   if (hideNoLiquidity) filtered = filtered.filter(m => m.volumeUSD > 0);
   if (hideNeutros) filtered = filtered.filter(m => m.decision !== "neutral");
 
-  filtered.sort((a, b) => {
-    if (a.isNew && !b.isNew) return -1;
-    if (!a.isNew && b.isNew) return 1;
-    const order = { short: 0, long: 1, lateral: 2, neutral: 3, aguardando: 4 };
-    const da = order[a.decision] ?? 5;
-    const db = order[b.decision] ?? 5;
-    if (da < db) return -1;
-    if (da > db) return 1;
-    if (sortKey && a[sortKey] !== undefined) {
-      const va = a[sortKey], vb = b[sortKey];
-      if (va < vb) return sortDir === "asc" ? -1 : 1;
-      if (va > vb) return sortDir === "asc" ? 1 : -1;
-    }
-    return 0;
-  });
+  if (sortKey) {
+    filtered.sort((a, b) => {
+      const va = a[sortKey],
+        vb = b[sortKey];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === "number" && typeof vb === "number")
+        return sortDir === "asc" ? va - vb : vb - va;
+      if (typeof va === "string" && typeof vb === "string")
+        return sortDir === "asc"
+          ? va.localeCompare(vb)
+          : vb.localeCompare(va);
+      return 0;
+    });
+  }
 
   filtered.forEach((m, i) => {
+    const status = classifyMarket(m);
     const tr = document.createElement("tr");
-    tr.className =
-      m.isAbandoned ? "abandoned" :
-      m.isNew ? "new" :
-      m.decision === "long" ? "green" :
-      m.decision === "short" ? "red" :
-      m.decision === "lateral" ? "blue" : "gray";
 
-    // Tooltips individuais
-    const atrTip = m.atrRel
-      ? `ATR ${ (m.atrRel * 100).toFixed(2)}% — ${m.atrRel < 0.003 ? "baixa volatilidade" : m.atrRel < 0.007 ? "média volatilidade" : "alta volatilidade"}`
-      : "Sem dados de ATR";
-    const rsiTip = m.rsi
-      ? `RSI ${m.rsi.toFixed(1)} — ${m.rsi < 30 ? "sobrevendido" : m.rsi > 70 ? "sobrecomprado" : "neutro"}`
-      : "Sem dados de RSI";
-    const bbTip = m.bbWidth
-      ? `Bollinger Width ${(m.bbWidth * 100).toFixed(2)}% — ${m.bbWidth < 0.01 ? "mercado calmo" : m.bbWidth > 0.03 ? "mercado volátil" : "moderado"}`
-      : "Sem dados de BB";
+    tr.className =
+      status === "upcoming"
+        ? "upcoming"
+        : status === "new"
+        ? "new"
+        : m.decision === "long"
+        ? "green"
+        : m.decision === "short"
+        ? "red"
+        : m.decision === "lateral"
+        ? "blue"
+        : "gray";
+
+    const statusBadge =
+      status === "upcoming"
+        ? "🕒 Em breve"
+        : status === "new"
+        ? "🆕"
+        : "";
 
     const oiOrLiq =
       currentTab === "perp"
         ? usdFmt.format(m.oiUSD || 0)
-        : `${usdFmt.format(m.marketCapUSD || 0)}<br><small>${(m.spreadPct || 0).toFixed(3)}% • score ${(m.liquidityScore || 0).toFixed(3)}</small>`;
+        : `${usdFmt.format(m.marketCapUSD || 0)}<br><small>${(
+            m.spreadPct || 0
+          ).toFixed(3)}% • score ${(m.liquidityScore || 0).toFixed(3)}</small>`;
 
     tr.innerHTML = `
       <td>${i + 1}</td>
-      <td title="Ativo ${m.symbol}">${m.symbol}${m.isNew ? " 🆕" : ""}</td>
-      <td title="Último preço em USD">${m.lastPrice > 0 ? "$" + m.lastPrice.toFixed(4) : "-"}</td>
-      <td class="${atrClass(m.atrRel || 0)}" title="${atrTip}">${m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"}</td>
-      <td title="${bbTip}">${m.bbWidth?.toFixed(4) || "-"}</td>
-      <td class="${rsiClass(m.rsi || 0)}" title="${rsiTip}">${m.rsi ? m.rsi.toFixed(1) : "-"}</td>
-      <td title="Volume em USD">${usdFmt.format(m.volumeUSD || 0)}</td>
-      <td title="${currentTab === "perp" ? "Open Interest total" : "MarketCap e spread"}">${oiOrLiq}</td>
-      <td title="Sinal do modelo">${(m.decision || "aguardando").toUpperCase()}</td>
-      <td title="Pontuação de confiança">${m.score || 0}</td>`;
+      <td>${m.symbol} <span class="status-badge">${statusBadge}</span></td>
+      <td>${m.lastPrice ? "$" + m.lastPrice.toFixed(4) : "-"}</td>
+      <td class="${atrClass(m.atrRel || 0)}">${
+      m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"
+    }</td>
+      <td class="${bbClass(m.bbWidth || 0)}">${
+      m.bbWidth ? m.bbWidth.toFixed(4) : "-"
+    }</td>
+      <td class="${rsiClass(m.rsi || 0)}">${
+      m.rsi ? m.rsi.toFixed(1) : "-"
+    }</td>
+      <td>${usdFmt.format(m.volumeUSD || 0)}</td>
+      <td>${oiOrLiq}</td>
+      <td>${(m.decision || "aguardando").toUpperCase()}</td>
+      <td>${m.score || 0}</td>`;
     tb.appendChild(tr);
   });
 }
+
+// ======== TIMEFRAME HANDLER ========
+// Agora troca o timeframe e força atualização completa com indicador "Atualizando..."
+window.changeTimeframe = function(tf) {
+  currentTimeframe = tf;
+  localStorage.setItem("selected_tf", tf);
+
+  const last = document.getElementById("lastUpdate");
+  if (last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
+
+  // mesmo comportamento do botão "Atualizar agora"
+  load(true, true);
+};
+
+
+// ======== RESTAURA TIMEFRAME ========
+document.addEventListener("DOMContentLoaded", () => {
+  const saved = localStorage.getItem("selected_tf");
+  if (saved) {
+    currentTimeframe = saved;
+    const sel = document.getElementById("timeframeSelect");
+    if (sel) sel.value = saved;
+  }
+});
 
 // ======== EVENTOS ========
 document.addEventListener("click", e => {

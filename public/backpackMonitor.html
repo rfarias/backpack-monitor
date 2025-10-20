@@ -7,7 +7,10 @@
   <link rel="stylesheet" href="monitor.css">
 </head>
 <body>
-  <h1>📊 Backpack Monitor</h1>
+  <header class="header">
+    <img src="https://backpack.exchange/favicon-32x32.png" alt="Backpack logo" class="logo">
+    <h1>Backpack Monitor</h1>
+  </header>
 
   <div class="tabs">
     <button id="tab-perp" class="active" onclick="switchTab('perp')">Perpétuos</button>
@@ -16,21 +19,42 @@
   </div>
 
   <div class="info-box" id="info-box">
-    <p><strong>Timeframe:</strong> Indicadores calculados no gráfico de <strong>3 minutos</strong>.</p>
+    <p>
+      <strong>Timeframe:</strong>
+      <select id="timeframeSelect" onchange="changeTimeframe(this.value)">
+        <option value="3m">3 minutos</option>
+        <option value="5m">5 minutos</option>
+        <option value="10m">10 minutos</option>
+        <option value="15m">15 minutos</option>
+        <option value="30m">30 minutos</option>
+        <option value="1h">1 hora</option>
+        <option value="4h">4 horas</option>
+        <option value="12h">12 horas</option>
+        <option value="1d">1 dia</option>
+      </select>
+    </p>
+
     <p><strong>Como interpretar:</strong></p>
     <ul>
-      <li><strong>ATR%</strong>: mede volatilidade — 
-        <span class="atr-low">≤0.3%</span>, 
-        <span class="atr-mid">0.3–0.7%</span>, 
-        <span class="atr-high">≥0.7%</span>.
+      <li><strong>ATR%</strong>: mede volatilidade —
+        <span class="atr-low" style="color:#3cf;">≤0.3%</span>,
+        <span class="atr-mid" style="color:#fc3;">0.3–0.7%</span>,
+        <span class="atr-high" style="color:#f66;">≥0.7%</span>.
       </li>
-      <li><strong>RSI</strong>: mede força do mercado. Verde ≤30, Vermelho ≥70.</li>
-      <li><strong>BB Width</strong>: largura das Bandas de Bollinger.</li>
-      <li><strong>Decisão:</strong> 
-        <span style="color:#6f6">Long</span>, 
-        <span style="color:#f99">Short</span>, 
-        <span style="color:#6cf">Lateral</span>, 
-        <span style="color:#ccc">Neutro</span>.
+      <li><strong>RSI</strong>: mede força do mercado —
+        <span style="color:#6f6;">≤30</span> <em>(sobrevendido)</em>,
+        <span style="color:#f66;">≥70</span> <em>(sobrecomprado)</em>.
+      </li>
+      <li><strong>BB Width</strong>: mede amplitude das Bandas de Bollinger —
+        <span style="color:#3cf;">&lt;0.01</span> <em>(mercado calmo)</em>,
+        <span style="color:#fc3;">0.01–0.029</span> <em>(mercado moderado)</em>,
+        <span style="color:#f66;">≥0.03</span> <em>(mercado volátil)</em>.
+      </li>
+      <li><strong>Decisão:</strong>
+        <span style="color:#6f6;">Long</span>,
+        <span style="color:#f99;">Short</span>,
+        <span style="color:#6cf;">Lateral</span>,
+        <span style="color:#ccc;">Neutro</span>.
       </li>
     </ul>
   </div>

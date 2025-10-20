@@ -1,5 +1,5 @@
 // === monitorTransfer.js ===
-// Exibe ativos e redes (depósitos/saques) com expansão
+// Exibe ativos e redes (depósitos/saques) sempre visíveis, sem precisar expandir
 
 export function renderTransfer(data) {
   const tb = document.querySelector("#tbl tbody");
@@ -15,6 +15,7 @@ export function renderTransfer(data) {
     <tr>
       <th>#</th>
       <th>Ativo</th>
+      <th>Rede</th>
       <th>Depósito</th>
       <th>Saque</th>
       <th>Taxa Saque</th>
@@ -35,48 +36,38 @@ export function renderTransfer(data) {
 
   for (const [symbol, rows] of Object.entries(grouped)) {
     const active = rows.some((r) => r.depositEnabled || r.withdrawEnabled);
-    const tr = document.createElement("tr");
-    tr.className = active ? "green" : "gray";
+    const trMain = document.createElement("tr");
+    trMain.className = active ? "transfer-main" : "transfer-main gray";
 
     const total = rows.length;
     const badge =
       total > 1 ? `<span class="net-badge">🧩 ${total} redes</span>` : "";
 
-    tr.innerHTML = `
+    trMain.innerHTML = `
       <td>${i++}</td>
-      <td class="expandable" data-symbol="${symbol}">
-        <b>${symbol}</b> ${badge}
-      </td>
-      <td colspan="6" class="expandable-hint">Clique para ver detalhes</td>
+      <td colspan="8" class="symbol"><b>${symbol}</b> ${badge}</td>
     `;
-    tb.appendChild(tr);
+    tb.appendChild(trMain);
 
     rows.forEach((r) => {
-      const sub = document.createElement("tr");
-      sub.className = "network-row hidden";
-      sub.dataset.parent = symbol;
+      const tr = document.createElement("tr");
+      tr.className = "transfer-chain";
 
-      sub.innerHTML = `
+      const depIcon = r.depositEnabled ? "🟢 Ativo" : "🔴 Inativo";
+      const wdrIcon = r.withdrawEnabled ? "🟢 Ativo" : "🔴 Inativo";
+
+      tr.innerHTML = `
         <td></td>
-        <td>${r.blockchain}</td>
-        <td>${r.depositEnabled ? "🟢 Ativo" : "🔴 Inativo"}</td>
-        <td>${r.withdrawEnabled ? "🟢 Ativo" : "🔴 Inativo"}</td>
-        <td>${r.withdrawalFee}</td>
-        <td>${r.minWithdraw}</td>
-        <td>${r.maxWithdraw}</td>
-        <td>${r.minDeposit}</td>
+        <td></td>
+        <td>${r.blockchain || "-"}</td>
+        <td>${depIcon}</td>
+        <td>${wdrIcon}</td>
+        <td>${r.withdrawalFee || "-"}</td>
+        <td>${r.minWithdraw || "-"}</td>
+        <td>${r.maxWithdraw || "-"}</td>
+        <td>${r.minDeposit || "-"}</td>
       `;
-      tb.appendChild(sub);
+      tb.appendChild(tr);
     });
   }
-
-  // clique para expandir / recolher
-  tb.addEventListener("click", (e) => {
-    const row = e.target.closest(".expandable");
-    if (!row) return;
-
-    const symbol = row.dataset.symbol;
-    const subs = tb.querySelectorAll(`tr.network-row[data-parent="${symbol}"]`);
-    subs.forEach((sub) => sub.classList.toggle("hidden"));
-  });
 }

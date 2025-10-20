@@ -187,6 +187,8 @@ export default async function handler(req, res) {
 
         results.push({
           symbol: m.symbol,
+          visible: m.visible, // ✅ adiciona status de visibilidade
+          orderBookState: m.orderBookState, // ✅ adiciona status da ordem
           lastPrice,
           atrRel,
           rsi,
