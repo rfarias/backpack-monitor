@@ -16,6 +16,8 @@
     <button id="tab-perp" class="active" onclick="switchTab('perp')">Perpétuos</button>
     <button id="tab-spot" onclick="switchTab('spot')">Spot</button>
     <button id="tab-transfer" onclick="switchTab('transfer')">Depósitos / Withdraw</button>
+    <!-- 🟦 Nova aba -->
+    <button id="tab-volume" onclick="switchTab('volume')">Volume Global</button>
   </div>
 
   <div class="info-box" id="info-box">
@@ -78,7 +80,26 @@
     <tbody></tbody>
   </table>
 
-  <!-- 🔧 scripts no modo módulo -->
+  <!-- 🟦 container do gráfico de volume global -->
+  <div id="volume-box" style="display:none; height:420px; margin-top:20px;">
+    <h2 style="margin:10px 0; color:#a9c2ff;">📊 Volume Global da Exchange</h2>
+
+    <!-- 🟨 seletor de intervalo -->
+    <p style="margin: 0 0 10px 0;">
+      <strong>Intervalo:</strong>
+      <select id="volumeIntervalSelect" onchange="changeVolumeInterval(this.value)">
+        <option value="week">Últimos 7 dias</option>
+        <option value="month" selected>Últimos 30 dias</option>
+        <option value="all">Todo o histórico</option>
+      </select>
+    </p>
+
+    <!-- gráfico -->
+    <canvas id="volumeChart"></canvas>
+  </div>
+
+  <!-- 🔧 scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="module" src="./monitor.js"></script>
 </body>
 </html>

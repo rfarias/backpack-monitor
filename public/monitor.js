@@ -1,9 +1,5 @@
 // === monitor.js ===
-// Atualizado: status direto da API Backpack + cache local leve + DEBUG de classificação
-// "Em breve" = visible=false & orderBookState=PostOnly
-// "Novo" = visible=true & orderBookState=PostOnly
-// "Normal" = visible=true & orderBookState=Open
-// Adicionado: seleção de timeframe e atualização suave
+// Mantém abas perp/spot/transfer com indicadores e cache por timeframe
 
 import { renderTransfer } from "./monitorTransfer.js";
 
@@ -15,7 +11,7 @@ let currentTab = "perp",
   sortDir = "desc",
   loadId = 0,
   cachedData = [],
-  currentTimeframe = "3m"; // 🕒 timeframe padrão
+  currentTimeframe = "3m"; // 🕒 padrão inicial
 
 const usdFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -32,29 +28,15 @@ function fmtTime(ts) {
 // ======== CLASSIFICAÇÃO ========
 function classifyMarket(m) {
   if (!m) return "normal";
-
-  // Garante que não tenha problema de tipo string vs boolean
   const vis =
     m.visible === true || m.visible === "true" || m.visible === 1 || m.visible === "1";
   const state = (m.orderBookState || "").toLowerCase();
 
-  if (!vis && state === "closed") return "normal"; // deslistado
-  if (!vis && state === "postonly") return "upcoming"; // em breve
-  if (vis && state === "postonly") return "new"; // novo
-  if (vis && state === "open") return "normal"; // ativo
+  if (!vis && state === "closed") return "normal";
+  if (!vis && state === "postonly") return "upcoming";
+  if (vis && state === "postonly") return "new";
+  if (vis && state === "open") return "normal";
   return "normal";
-}
-
-// ======== DEBUG ========
-function debugMarketStatus(data) {
-  console.groupCollapsed("🔍 Verificação de status de mercados");
-  data.forEach(m => {
-    const status = classifyMarket(m);
-    console.log(
-      `${m.symbol}: visible=${m.visible}, orderBookState=${m.orderBookState} → ${status}`
-    );
-  });
-  console.groupEnd();
 }
 
 // ======== FILTROS ========
@@ -120,10 +102,11 @@ export async function load(force = false, auto = false) {
   const tb = document.querySelector("#tbl tbody");
   const last = document.getElementById("lastUpdate");
 
-  const cacheKey = "cache_" + currentTab;
+  // 🔸 Chave de cache inclui timeframe
+  const cacheKey = `cache_${currentTab}_${currentTimeframe}`;
   const cacheTimeKey = cacheKey + "_time";
 
-  // 🔸 Usa cache enquanto carrega (sem piscar)
+  // Usa cache local enquanto carrega
   if (!force && localStorage.getItem(cacheKey)) {
     try {
       cachedData = JSON.parse(localStorage.getItem(cacheKey));
@@ -147,9 +130,6 @@ export async function load(force = false, auto = false) {
       const ts = Date.now();
       localStorage.setItem(cacheTimeKey, ts);
 
-      // 🧩 Logar no console a classificação
-      debugMarketStatus(data);
-
       renderActiveTab();
       last.textContent = "Atualizado às " + fmtTime(ts);
     }
@@ -166,27 +146,29 @@ export async function load(force = false, auto = false) {
 // ======== TABS ========
 export function switchTab(tab) {
   currentTab = tab;
-  document
-    .querySelectorAll(".tabs button")
-    .forEach(b => b.classList.remove("active"));
-  document.getElementById("tab-" + tab).classList.add("active");
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+  const btn = document.getElementById("tab-" + tab);
+  if (btn) btn.classList.add("active");
 
-  const show = tab !== "transfer";
-  document.getElementById("filters").style.display = "block";
-  document.getElementById("info-box").style.display = show ? "block" : "none";
+  const infoBox = document.getElementById("info-box");
+  const filters = document.getElementById("filters");
+  const table = document.getElementById("tbl");
 
-  const showBtn = show ? "inline-block" : "none";
-  ["neutro", "liq", "long", "short", "lateral", "neutral"].forEach(
-    id => (document.getElementById("btn-" + id).style.display = showBtn)
-  );
-  document.getElementById("btn-new").style.display =
-    tab === "transfer" ? "inline-block" : "none";
+  // Oculta tudo antes
+  if (infoBox) infoBox.style.display = "none";
+  if (filters) filters.style.display = "none";
+  if (table) table.style.display = "none";
 
-  load(false);
-}
-
-function manualRefresh() {
-  load(true, true);
+  if (tab === "perp" || tab === "spot") {
+    infoBox.style.display = "block";
+    filters.style.display = "block";
+    table.style.display = "table";
+    load(false);
+  } else if (tab === "transfer") {
+    filters.style.display = "block";
+    table.style.display = "table";
+    load(false);
+  }
 }
 
 // ======== RENDERIZAÇÃO ========
@@ -202,7 +184,7 @@ function renderTable(data) {
   tb.innerHTML = "";
 
   const label =
-    currentTab === "perp" ? "Open Interest 💥" : "MarketCap / Spread 💧";
+    currentTab === "perp" ? "Open Interest 💥" : "Liquidity 💧";
   th.innerHTML = `<tr>
       <th>#</th>
       <th data-key="symbol">Symbol</th>
@@ -235,9 +217,7 @@ function renderTable(data) {
       if (typeof va === "number" && typeof vb === "number")
         return sortDir === "asc" ? va - vb : vb - va;
       if (typeof va === "string" && typeof vb === "string")
-        return sortDir === "asc"
-          ? va.localeCompare(vb)
-          : vb.localeCompare(va);
+        return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
       return 0;
     });
   }
@@ -260,16 +240,13 @@ function renderTable(data) {
         : "gray";
 
     const statusBadge =
-      status === "upcoming"
-        ? "🕒 Em breve"
-        : status === "new"
-        ? "🆕"
-        : "";
+      status === "upcoming" ? "🕒 Em breve" :
+      status === "new" ? "🆕" : "";
 
     const oiOrLiq =
       currentTab === "perp"
         ? usdFmt.format(m.oiUSD || 0)
-        : `${usdFmt.format(m.marketCapUSD || 0)}<br><small>${(
+        : `${usdFmt.format(m.volumeUSD || 0)}<br><small>${(
             m.spreadPct || 0
           ).toFixed(3)}% • score ${(m.liquidityScore || 0).toFixed(3)}</small>`;
 
@@ -277,15 +254,9 @@ function renderTable(data) {
       <td>${i + 1}</td>
       <td>${m.symbol} <span class="status-badge">${statusBadge}</span></td>
       <td>${m.lastPrice ? "$" + m.lastPrice.toFixed(4) : "-"}</td>
-      <td class="${atrClass(m.atrRel || 0)}">${
-      m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"
-    }</td>
-      <td class="${bbClass(m.bbWidth || 0)}">${
-      m.bbWidth ? m.bbWidth.toFixed(4) : "-"
-    }</td>
-      <td class="${rsiClass(m.rsi || 0)}">${
-      m.rsi ? m.rsi.toFixed(1) : "-"
-    }</td>
+      <td class="${atrClass(m.atrRel || 0)}">${m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"}</td>
+      <td class="${bbClass(m.bbWidth || 0)}">${m.bbWidth ? m.bbWidth.toFixed(4) : "-"}</td>
+      <td class="${rsiClass(m.rsi || 0)}">${m.rsi ? m.rsi.toFixed(1) : "-"}</td>
       <td>${usdFmt.format(m.volumeUSD || 0)}</td>
       <td>${oiOrLiq}</td>
       <td>${(m.decision || "aguardando").toUpperCase()}</td>
@@ -295,18 +266,13 @@ function renderTable(data) {
 }
 
 // ======== TIMEFRAME HANDLER ========
-// Agora troca o timeframe e força atualização completa com indicador "Atualizando..."
 window.changeTimeframe = function(tf) {
   currentTimeframe = tf;
   localStorage.setItem("selected_tf", tf);
-
   const last = document.getElementById("lastUpdate");
   if (last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
-
-  // mesmo comportamento do botão "Atualizar agora"
   load(true, true);
 };
-
 
 // ======== RESTAURA TIMEFRAME ========
 document.addEventListener("DOMContentLoaded", () => {
@@ -324,15 +290,12 @@ document.addEventListener("click", e => {
   if (!th || currentTab === "transfer") return;
   const key = th.getAttribute("data-key");
   if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
-  else {
-    sortKey = key;
-    sortDir = "desc";
-  }
+  else { sortKey = key; sortDir = "desc"; }
   renderTable(cachedData);
 });
 
 window.switchTab = switchTab;
-window.manualRefresh = manualRefresh;
+window.manualRefresh = () => load(true, true);
 window.setFilter = setFilter;
 window.toggleLiquidity = toggleLiquidity;
 window.toggleNeutros = toggleNeutros;
