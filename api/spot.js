@@ -2,10 +2,10 @@
 import fetch from "node-fetch";
 
 const BASE_URL = "https://api.backpack.exchange/api/v1";
-const UPDATE_INTERVAL = 180000; // 3 minutos
+const UPDATE_INTERVAL = 180000;
 const MAX_CONCURRENT = 5;
 
-let cache = { ts: 0, tf: "3m", data: [] };
+let cache = { ts: 0, data: [] };
 
 // === Funções auxiliares ===
 const mean = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
@@ -58,15 +58,12 @@ const computeEMA = (closes, period = 20) => {
   return ema;
 };
 
-// === Buscar klines respeitando timeframe ===
 const fetchKlines = async (symbol, interval = "15m", limit = 200) => {
-  const intervalSecMap = {
-    "3m": 180, "5m": 300, "10m": 600, "15m": 900,
-    "30m": 1800, "1h": 3600, "4h": 14400,
-    "12h": 43200, "1d": 86400
-  };
-  const intervalSec = intervalSecMap[interval] || 900;
-
+  const intervalSec = interval.endsWith("m")
+    ? +interval.replace("m", "") * 60
+    : interval.endsWith("h")
+    ? +interval.replace("h", "") * 3600
+    : 1800;
   try {
     const nowSec = Math.floor(Date.now() / 1000);
     const startSec = nowSec - limit * intervalSec;
@@ -84,8 +81,6 @@ const fetchKlines = async (symbol, interval = "15m", limit = 200) => {
           ts: +c.openTime
         }));
       }
-    } else {
-      console.log(`⚠️ klines ${symbol} HTTP ${resp.status}`);
     }
   } catch (e) {
     console.log(`⚠️ klines falhou ${symbol}: ${e.message}`);
@@ -97,14 +92,12 @@ const fetchKlines = async (symbol, interval = "15m", limit = 200) => {
 export default async function handler(req, res) {
   try {
     const now = Date.now();
-    const tf = req.query.tf || "15m"; // 🔸 timeframe do usuário (default 15m)
+    const tf = req.query.tf || "15m";
+    console.log(`[INFO] /api/spot chamado com timeframe = ${tf}`);
 
-    // Cache válido e mesmo timeframe
-    if (now - cache.ts < UPDATE_INTERVAL && cache.data.length > 0 && cache.tf === tf) {
+    if (now - cache.ts < UPDATE_INTERVAL && cache.data.length > 0) {
       return res.status(200).json(cache.data);
     }
-
-    console.log(`📊 Atualizando /api/spot com timeframe = ${tf}`);
 
     const marketsResp = await fetch(`${BASE_URL}/markets`);
     const markets = (await marketsResp.json()) || [];
@@ -120,9 +113,6 @@ export default async function handler(req, res) {
         let spreadPct = 0, liquidityScore = 0;
         let decision = "aguardando", score = 0;
         let isNew = false, isAbandoned = false;
-
-        const isMarginable = Boolean(m.marginEnabled);
-        const maxLeverage = Number(m.maxLeverage || 0);
 
         try {
           let ticker = {};
@@ -144,8 +134,8 @@ export default async function handler(req, res) {
           marketCapUSD = (volumeUSD > 0 && lastPrice > 0) ? volumeUSD * 24 : 0;
           liquidityScore = spreadPct > 0 ? (volumeUSD / (spreadPct * 100)) : volumeUSD;
 
-          // 🔸 Buscar candles conforme timeframe global (tf)
-          let kl = await fetchKlines(m.symbol, tf, 200);
+          // === agora respeita timeframe do usuário ===
+          const kl = await fetchKlines(m.symbol, tf, 200);
           const hadCandles = kl && kl.length > 0;
           const closes = kl.map(k => k.close);
           const highs = kl.map(k => k.high);
@@ -158,11 +148,7 @@ export default async function handler(req, res) {
             bbWidth = computeBollinger(closes).width;
             ema20 = computeEMA(closes);
 
-            const hasIndicators = atrRel > 0 && rsi > 0 && bbWidth > 0;
-
-            if (!hasIndicators) {
-              decision = "aguardando"; score = 0;
-            } else if (rsi < 30 && lastPrice > ema20) {
+            if (rsi < 30 && lastPrice > ema20) {
               decision = "long"; score = 2;
             } else if (rsi > 70 && lastPrice < ema20) {
               decision = "short"; score = -2;
@@ -171,20 +157,9 @@ export default async function handler(req, res) {
             } else {
               decision = "neutral"; score = 0;
             }
-          } else {
-            const nowSec = Math.floor(Date.now() / 1000);
-            const createdAt = Math.floor(+new Date(m.createdAt || 0) / 1000);
-            const ageDays = (nowSec - createdAt) / 86400;
-            const noData = !volumeUSD;
-            const noKlines = !kl || kl.length === 0;
-
-            if (noData && noKlines && ageDays <= 60) isNew = true;
-            else if (hadCandles && volumeUSD === 0) isAbandoned = true;
-            decision = "aguardando";
           }
         } catch (err) {
           console.log(`⚠️ Erro ${m.symbol}: ${err.message}`);
-          decision = "aguardando";
         }
 
         results.push({
@@ -202,8 +177,6 @@ export default async function handler(req, res) {
           liquidityScore,
           decision,
           score,
-          isMarginable,
-          maxLeverage,
           isNew,
           isAbandoned
         });
@@ -216,18 +189,7 @@ export default async function handler(req, res) {
     }
 
     await Promise.all(active);
-
-    results.sort((a, b) => {
-      if (a.isNew && !b.isNew) return -1;
-      if (!a.isNew && b.isNew) return 1;
-      if (a.isAbandoned && !b.isAbandoned) return 1;
-      if (!a.isAbandoned && b.isAbandoned) return -1;
-      if (a.isMarginable && !b.isMarginable) return -1;
-      if (!a.isMarginable && b.isMarginable) return 1;
-      return b.liquidityScore - a.liquidityScore;
-    });
-
-    cache = { ts: now, tf, data: results };
+    cache = { ts: now, data: results };
     res.status(200).json(results);
   } catch (e) {
     console.error("Erro geral /api/spot:", e.message);

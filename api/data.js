@@ -61,13 +61,11 @@ const computeEMA = (closes, period = 20) => {
 
 // === FETCH KLINES COM FALLBACK ===
 const fetchKlines = async (symbol, interval = "3m", limit = 100) => {
-  const intervalSecMap = {
-    "3m": 180, "5m": 300, "10m": 600, "15m": 900,
-    "30m": 1800, "1h": 3600, "4h": 14400,
-    "12h": 43200, "1d": 86400
-  };
-  const intervalSec = intervalSecMap[interval] || 180;
-
+  const intervalSec = interval.endsWith("m")
+    ? +interval.replace("m", "") * 60
+    : interval.endsWith("h")
+    ? +interval.replace("h", "") * 3600
+    : 180;
   try {
     const nowSec = Math.floor(Date.now() / 1000);
     const startSec = nowSec - limit * intervalSec;
@@ -91,60 +89,24 @@ const fetchKlines = async (symbol, interval = "3m", limit = 100) => {
           ts: +c.openTime
         }));
       }
-    } else {
-      console.log(`⚠️ ${symbol} - HTTP ${resp.status} (${interval})`);
     }
   } catch (e) {
-    console.log(`⚠️ klines falhou ${symbol} (${interval}): ${e.message}`);
+    console.log(`⚠️ klines falhou ${symbol}: ${e.message}`);
   }
-
-  // === Fallback via /trades ===
-  try {
-    const tradeUrl = `${BASE_URL}/trades?symbol=${symbol}&limit=${limit * 3}`;
-    const tResp = await fetch(tradeUrl);
-    if (!tResp.ok) {
-      console.log(`⚠️ trades falhou ${symbol}: ${tResp.status}`);
-      return [];
-    }
-    const trades = await tResp.json();
-    const buckets = {};
-    trades.forEach(tr => {
-      const ts = Math.floor(tr.timestamp / 1000);
-      const bucket = Math.floor(ts / intervalSec) * intervalSec;
-      const p = +tr.price, q = +tr.quantity;
-      if (!buckets[bucket]) {
-        buckets[bucket] = { open: null, high: -Infinity, low: Infinity, close: null, volume: 0, ts: bucket };
-      }
-      const b = buckets[bucket];
-      if (b.open === null) b.open = p;
-      b.high = Math.max(b.high, p);
-      b.low = Math.min(b.low, p);
-      b.close = p;
-      b.volume += q * p;
-    });
-    return Object.values(buckets)
-      .filter(b => b.open !== null)
-      .sort((a, b) => a.ts - b.ts);
-  } catch (e) {
-    console.log(`❌ trades fallback falhou ${symbol}: ${e.message}`);
-    return [];
-  }
+  return [];
 };
 
 // === HANDLER PRINCIPAL ===
 export default async function handler(req, res) {
   try {
     const now = Date.now();
-
-    // 🕒 timeframe selecionado pelo usuário
     const tf = req.query.tf || "3m";
+    console.log(`[INFO] /api/data chamado com timeframe = ${tf}`);
 
     // cache ainda válido
-    if (now - cache.ts < UPDATE_INTERVAL && cache.data.length > 0 && cache.tf === tf) {
+    if (now - cache.ts < UPDATE_INTERVAL && cache.data.length > 0) {
       return res.status(200).json(cache.data);
     }
-
-    console.log(`📊 Atualizando /api/data com timeframe = ${tf}`);
 
     const [marketsResp, oiResp] = await Promise.all([
       fetch(`${BASE_URL}/markets`),
@@ -180,21 +142,13 @@ export default async function handler(req, res) {
           volumeUSD = (+ticker.volume || 0) * lastPrice;
           oiUSD = ((oiMap[m.symbol]?.openInterest) || 0) * lastPrice;
 
-          // --- klines e trades ---
+          // --- klines ---
           const kl = await fetchKlines(m.symbol, tf, 100);
           const hadCandles = kl && kl.length > 0;
 
-          let trades = [];
-          try {
-            const tResp = await fetch(`${BASE_URL}/trades?symbol=${m.symbol}&limit=50`);
-            if (tResp.ok) trades = await tResp.json();
-          } catch {}
-          const hadTrades = Array.isArray(trades) && trades.length > 0;
+          const hadActivity = hadCandles && lastPrice > 0 && (volumeUSD > 0 || oiUSD > 0);
 
-          const hadActivity = hadCandles || hadTrades;
-
-          if (hadActivity && lastPrice > 0 && (volumeUSD > 0 || oiUSD > 0)) {
-            // mercado ativo
+          if (hadActivity) {
             const closes = kl.map(k => k.close);
             const highs = kl.map(k => k.high);
             const lows = kl.map(k => k.low);
@@ -204,7 +158,6 @@ export default async function handler(req, res) {
             bbWidth = computeBollinger(closes).width;
             ema20 = computeEMA(closes);
 
-            // --- decisão segura ---
             if (!isNaN(rsi) && rsi > 0) {
               if (rsi < 30 && lastPrice > ema20) {
                 decision = "long";
@@ -219,30 +172,17 @@ export default async function handler(req, res) {
                 decision = "neutral";
                 score = 0;
               }
-            } else {
-              decision = "aguardando";
-              score = 0;
             }
           } else {
             // sem atividade recente
             const nowSec = Math.floor(Date.now() / 1000);
             const createdAt = Math.floor(+new Date(m.createdAt || 0) / 1000);
             const ageDays = (nowSec - createdAt) / 86400;
-
             const noData = (!volumeUSD || volumeUSD === 0) && (!oiUSD || oiUSD === 0);
-            const noKlines = !kl || kl.length === 0;
-
-            if (noData && noKlines && !hadActivity && ageDays <= 60) {
-              isNew = true;
-            } else if (hadActivity && (volumeUSD === 0 && oiUSD === 0)) {
-              isAbandoned = true;
-            }
-
-            decision = "aguardando";
+            if (noData && ageDays <= 60) isNew = true;
           }
         } catch (err) {
           console.log(`⚠️ Erro ${m.symbol}: ${err.message}`);
-          decision = "aguardando";
         }
 
         results.push({
@@ -270,16 +210,7 @@ export default async function handler(req, res) {
     }
 
     await Promise.all(active);
-
-    results.sort((a, b) => {
-      if (a.isNew && !b.isNew) return -1;
-      if (!a.isNew && b.isNew) return 1;
-      if (a.isAbandoned && !b.isAbandoned) return 1;
-      if (!a.isAbandoned && b.isAbandoned) return -1;
-      return b.oiUSD - a.oiUSD;
-    });
-
-    cache = { ts: now, tf, data: results };
+    cache = { ts: now, data: results };
     res.status(200).json(results);
   } catch (e) {
     console.error("Erro geral /api/data:", e.message);
