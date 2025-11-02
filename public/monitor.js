@@ -4,6 +4,7 @@
 // "Novo" = visible=true & orderBookState=PostOnly
 // "Normal" = visible=true & orderBookState=Open
 // Adicionado: seleção de timeframe e atualização suave
+// ✅ Atualizado para thresholds dinâmicos por timeframe (ATR / BB Width)
 
 import { renderTransfer } from "./monitorTransfer.js";
 
@@ -33,7 +34,6 @@ function fmtTime(ts) {
 function classifyMarket(m) {
   if (!m) return "normal";
 
-  // Garante que não tenha problema de tipo string vs boolean
   const vis =
     m.visible === true || m.visible === "true" || m.visible === 1 || m.visible === "1";
   const state = (m.orderBookState || "").toLowerCase();
@@ -86,12 +86,30 @@ export function toggleNeutros() {
   if (currentTab !== "transfer") renderTable(cachedData);
 }
 
+// ======== ESCALONAMENTO POR TIMEFRAME ========
+function getScale(tf) {
+  const map = {
+    "1m": 1,
+    "3m": 3,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "12h": 720,
+    "1d": 1440
+  };
+  const mins = map[tf] || 3;
+  return Math.log10(mins) / 2 + 1;
+}
+
 // ======== ESTILOS ========
 function atrClass(atr) {
+  const scale = getScale(currentTimeframe);
   const val = parseFloat(atr) * 100;
   if (isNaN(val)) return "";
-  if (val <= 0.3) return "atr-low";
-  if (val < 0.7) return "atr-mid";
+  if (val <= 0.3 * scale) return "atr-low";
+  if (val < 0.7 * scale) return "atr-mid";
   return "atr-high";
 }
 function rsiClass(rsi) {
@@ -102,8 +120,9 @@ function rsiClass(rsi) {
   return "rsi-mid";
 }
 function bbClass(bb) {
-  if (bb < 0.01) return "bb-low";
-  if (bb < 0.03) return "bb-mid";
+  const scale = getScale(currentTimeframe);
+  if (bb < 0.01 * scale) return "bb-low";
+  if (bb < 0.03 * scale) return "bb-mid";
   return "bb-high";
 }
 
@@ -147,9 +166,7 @@ export async function load(force = false, auto = false) {
       const ts = Date.now();
       localStorage.setItem(cacheTimeKey, ts);
 
-      // 🧩 Logar no console a classificação
       debugMarketStatus(data);
-
       renderActiveTab();
       last.textContent = "Atualizado às " + fmtTime(ts);
     }
@@ -277,15 +294,9 @@ function renderTable(data) {
       <td>${i + 1}</td>
       <td>${m.symbol} <span class="status-badge">${statusBadge}</span></td>
       <td>${m.lastPrice ? "$" + m.lastPrice.toFixed(4) : "-"}</td>
-      <td class="${atrClass(m.atrRel || 0)}">${
-      m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"
-    }</td>
-      <td class="${bbClass(m.bbWidth || 0)}">${
-      m.bbWidth ? m.bbWidth.toFixed(4) : "-"
-    }</td>
-      <td class="${rsiClass(m.rsi || 0)}">${
-      m.rsi ? m.rsi.toFixed(1) : "-"
-    }</td>
+      <td class="${atrClass(m.atrRel || 0)}">${m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"}</td>
+      <td class="${bbClass(m.bbWidth || 0)}">${m.bbWidth ? m.bbWidth.toFixed(4) : "-"}</td>
+      <td class="${rsiClass(m.rsi || 0)}">${m.rsi ? m.rsi.toFixed(1) : "-"}</td>
       <td>${usdFmt.format(m.volumeUSD || 0)}</td>
       <td>${oiOrLiq}</td>
       <td>${(m.decision || "aguardando").toUpperCase()}</td>
@@ -295,7 +306,6 @@ function renderTable(data) {
 }
 
 // ======== TIMEFRAME HANDLER ========
-// Agora troca o timeframe e força atualização completa com indicador "Atualizando..."
 window.changeTimeframe = function(tf) {
   currentTimeframe = tf;
   localStorage.setItem("selected_tf", tf);
@@ -303,10 +313,8 @@ window.changeTimeframe = function(tf) {
   const last = document.getElementById("lastUpdate");
   if (last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
 
-  // mesmo comportamento do botão "Atualizar agora"
   load(true, true);
 };
-
 
 // ======== RESTAURA TIMEFRAME ========
 document.addEventListener("DOMContentLoaded", () => {
