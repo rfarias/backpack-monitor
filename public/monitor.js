@@ -12,7 +12,9 @@ let currentTab = "perp",
   sortDir = "desc",
   loadId = 0,
   cachedData = [],
-  currentTimeframe = "3m"; // 🕒 padrão
+  currentTimeframe = "3m", // 🕒 padrão
+  isLoading = false,
+  lastTfChange = 0;
 
 const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -151,11 +153,9 @@ export async function load(force = false, auto = false) {
 }
 
 // ======== TROCA DE ABA ========
-// ======== TROCA DE ABA ========
 export function switchTab(tab) {
   currentTab = tab;
 
-  // Atualiza destaque do header
   document.querySelectorAll("#header-menu button").forEach(b => {
     b.classList.toggle("active", b.id === "tab-" + tab);
   });
@@ -165,7 +165,6 @@ export function switchTab(tab) {
   const tbl = document.getElementById("tbl");
   const vol = document.getElementById("volumeContainer");
 
-  // Aba volume
   if (tab === "volume") {
     if (tbl) tbl.style.display = "none";
     if (filters) filters.style.display = "none";
@@ -178,29 +177,24 @@ export function switchTab(tab) {
     return;
   }
 
-  // Outras abas
   if (vol) vol.style.display = "none";
   if (tbl) tbl.style.display = "table";
   if (info) info.style.display = tab === "transfer" ? "none" : "block";
 
-  // ======== AJUSTE: ocultar todos os botões exceto "🔄 Atualizar agora" na aba Transfer ========
   const filterButtons = document.querySelectorAll("#filters button");
   filterButtons.forEach(btn => {
     if (!btn) return;
     const texto = (btn.textContent || "").trim();
     if (tab === "transfer") {
-      // Mostra apenas o botão de atualizar
       if (texto.includes("🔄 Atualizar agora")) {
         btn.style.display = "inline-block";
       } else {
         btn.style.display = "none";
       }
     } else {
-      // Outras abas (perp/spot): todos visíveis
       btn.style.display = "inline-block";
     }
   });
-  // ==============================================================================================
 
   if (filters) filters.style.display = "block";
 
@@ -300,7 +294,6 @@ function renderTable(data) {
 
 // ======== FILTROS ========
 window.setFilter = f => {
-  // toggle: se clicar no mesmo filtro, desativa e volta a "all"
   if (currentFilter === f) {
     currentFilter = "all";
     document.querySelectorAll(".filters button").forEach(btn => btn.classList.remove("active"));
@@ -330,29 +323,42 @@ window.toggleNeutros = () => {
 
 // ======== TIMEFRAME ========
 window.changeTimeframe = async tf => {
+  const now = Date.now();
+  if (now - lastTfChange < 30000) {
+    console.warn("Troca de timeframe bloqueada por 30s.");
+    return;
+  }
+  if (isLoading) {
+    console.warn("Atualização já em andamento. Aguardando...");
+    return;
+  }
+
   currentTimeframe = tf;
   localStorage.setItem("selected_tf", tf);
+  lastTfChange = now;
 
   const last = document.getElementById("lastUpdate");
   const refreshBtn = document.querySelector("#filters button[onclick*='manualRefresh']");
+  const tfSelect = document.getElementById("timeframeSelect");
 
-  // Mostra status de atualização e desativa o botão
   if (last) last.textContent = "Atualizando...";
   if (refreshBtn) refreshBtn.disabled = true;
+  if (tfSelect) tfSelect.disabled = true;
 
-  // Mantém a tabela atual visível enquanto busca os novos dados
   try {
+    isLoading = true;
     await load(true, true);
-
-    // Atualiza o texto após o carregamento
     if (last) last.textContent = "Atualizado às " + fmtTime(Date.now());
   } catch (e) {
     if (last) last.textContent = "Erro ao atualizar";
     console.warn("Erro ao atualizar timeframe:", e.message);
+  } finally {
+    setTimeout(() => {
+      if (tfSelect) tfSelect.disabled = false;
+    }, 30000);
+    if (refreshBtn) refreshBtn.disabled = false;
+    isLoading = false;
   }
-
-  // Reabilita o botão
-  if (refreshBtn) refreshBtn.disabled = false;
 };
 
 // ======== EVENTOS ========
