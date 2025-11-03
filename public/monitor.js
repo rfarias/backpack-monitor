@@ -1,12 +1,8 @@
 // === monitor.js ===
-// Atualizado: status direto da API Backpack + cache local leve + DEBUG de classificação
-// "Em breve" = visible=false & orderBookState=PostOnly
-// "Novo" = visible=true & orderBookState=PostOnly
-// "Normal" = visible=true & orderBookState=Open
-// Adicionado: seleção de timeframe e atualização suave
-// ✅ Atualizado para thresholds dinâmicos por timeframe (ATR / BB Width)
+// Corrigido: Volume 24h ativo, botões toggle, ocultação correta em Transfers e cache suave.
 
 import { renderTransfer } from "./monitorTransfer.js";
+import { renderVolumeTab } from "./monitorVolume.js";
 
 let currentTab = "perp",
   currentFilter = "all",
@@ -16,12 +12,9 @@ let currentTab = "perp",
   sortDir = "desc",
   loadId = 0,
   cachedData = [],
-  currentTimeframe = "3m"; // 🕒 timeframe padrão
+  currentTimeframe = "3m"; // 🕒 padrão
 
-const usdFmt = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 // ======== FORMATOS ========
 function fmtTime(ts) {
@@ -33,100 +26,83 @@ function fmtTime(ts) {
 // ======== CLASSIFICAÇÃO ========
 function classifyMarket(m) {
   if (!m) return "normal";
-
-  const vis =
-    m.visible === true || m.visible === "true" || m.visible === 1 || m.visible === "1";
+  const vis = m.visible === true || m.visible === "true" || m.visible === 1 || m.visible === "1";
   const state = (m.orderBookState || "").toLowerCase();
-
-  if (!vis && state === "closed") return "normal"; // deslistado
-  if (!vis && state === "postonly") return "upcoming"; // em breve
-  if (vis && state === "postonly") return "new"; // novo
-  if (vis && state === "open") return "normal"; // ativo
+  if (!vis && state === "postonly") return "upcoming";
+  if (vis && state === "postonly") return "new";
+  if (vis && state === "open") return "normal";
   return "normal";
-}
-
-// ======== DEBUG ========
-function debugMarketStatus(data) {
-  console.groupCollapsed("🔍 Verificação de status de mercados");
-  data.forEach(m => {
-    const status = classifyMarket(m);
-    console.log(
-      `${m.symbol}: visible=${m.visible}, orderBookState=${m.orderBookState} → ${status}`
-    );
-  });
-  console.groupEnd();
-}
-
-// ======== FILTROS ========
-export function setFilter(f) {
-  currentFilter = f;
-  document.querySelectorAll(".filters button").forEach(btn =>
-    btn.classList.remove("active")
-  );
-  const btn = document.getElementById("btn-" + f);
-  if (btn) btn.classList.add("active");
-  if (currentTab !== "transfer") renderTable(cachedData);
-}
-
-export function toggleLiquidity() {
-  hideNoLiquidity = !hideNoLiquidity;
-  const btn = document.getElementById("btn-liq");
-  btn.classList.toggle("active", hideNoLiquidity);
-  btn.textContent = hideNoLiquidity
-    ? "Mostrar sem liquidez"
-    : "Ocultar sem liquidez";
-  if (currentTab !== "transfer") renderTable(cachedData);
-}
-
-export function toggleNeutros() {
-  hideNeutros = !hideNeutros;
-  const btn = document.getElementById("btn-neutro");
-  btn.classList.toggle("active", hideNeutros);
-  btn.textContent = hideNeutros ? "Mostrar neutros" : "Ocultar neutros";
-  if (currentTab !== "transfer") renderTable(cachedData);
 }
 
 // ======== ESCALONAMENTO POR TIMEFRAME ========
 function getScale(tf) {
-  const map = {
-    "1m": 1,
-    "3m": 3,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "12h": 720,
-    "1d": 1440
-  };
+  const map = { "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "12h": 720, "1d": 1440 };
   const mins = map[tf] || 3;
   return Math.log10(mins) / 2 + 1;
 }
 
 // ======== ESTILOS ========
-function atrClass(atr) {
-  const scale = getScale(currentTimeframe);
-  const val = parseFloat(atr) * 100;
-  if (isNaN(val)) return "";
-  if (val <= 0.3 * scale) return "atr-low";
-  if (val < 0.7 * scale) return "atr-mid";
+function atrClass(v) {
+  const s = getScale(currentTimeframe), val = (v || 0) * 100;
+  if (val <= 0.3 * s) return "atr-low";
+  if (val < 0.7 * s) return "atr-mid";
   return "atr-high";
 }
-function rsiClass(rsi) {
-  const val = parseFloat(rsi);
-  if (isNaN(val)) return "";
-  if (val <= 30) return "rsi-low";
-  if (val >= 70) return "rsi-high";
+function rsiClass(v) {
+  if (v <= 30) return "rsi-low";
+  if (v >= 70) return "rsi-high";
   return "rsi-mid";
 }
-function bbClass(bb) {
-  const scale = getScale(currentTimeframe);
-  if (bb < 0.01 * scale) return "bb-low";
-  if (bb < 0.03 * scale) return "bb-mid";
+function bbClass(v) {
+  const s = getScale(currentTimeframe);
+  if (v < 0.01 * s) return "bb-low";
+  if (v < 0.03 * s) return "bb-mid";
   return "bb-high";
 }
 
-// ======== ATUALIZAÇÃO ========
+// ======== CACHE ========
+function getCache(tab) {
+  try {
+    const raw = localStorage.getItem("cache_" + tab);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ======== ATUALIZA VOLUME TOPO ========
+async function updateVolumeHeader() {
+  const volTxt = document.getElementById("volumeTopText");
+  if (volTxt) volTxt.textContent = "Volume 24h — carregando...";
+
+  try {
+    const res = await fetch("/api/volume?days=1");
+    if (!res.ok) throw new Error("Falha ao buscar volume");
+    const json = await res.json();
+    const data = json.data || [];
+    if (!data.length) throw new Error("Sem dados de volume");
+
+    const last = data[data.length - 1];
+    const spot = last.spot || 0;
+    const perp = last.perp || 0;
+    const total = last.total || 0;
+
+    const fmt = v => (v >= 1e9 ? (v / 1e9).toFixed(2) + " B" : v >= 1e6 ? (v / 1e6).toFixed(2) + " M" : v.toFixed(2));
+
+    if (volTxt)
+      volTxt.innerHTML = `
+        Volume 24h — 
+        <span style="color:#3cf;">Spot: ${fmt(spot)} USD</span> • 
+        <span style="color:#9f6cff;">Perp: ${fmt(perp)} USD</span> • 
+        <span style="color:#0f8;">Total: ${fmt(total)} USD</span>`;
+  } catch (e) {
+    if (document.getElementById("volumeTopText"))
+      document.getElementById("volumeTopText").textContent = "Volume 24h — erro ao carregar.";
+    console.warn("Erro ao buscar volume:", e.message);
+  }
+}
+
+// ======== LOAD PRINCIPAL ========
 export async function load(force = false, auto = false) {
   const id = ++loadId;
   const endpoint =
@@ -138,21 +114,21 @@ export async function load(force = false, auto = false) {
 
   const tb = document.querySelector("#tbl tbody");
   const last = document.getElementById("lastUpdate");
-
   const cacheKey = "cache_" + currentTab;
   const cacheTimeKey = cacheKey + "_time";
 
-  // 🔸 Usa cache enquanto carrega (sem piscar)
-  if (!force && localStorage.getItem(cacheKey)) {
-    try {
-      cachedData = JSON.parse(localStorage.getItem(cacheKey));
+  // Usa cache imediatamente
+  if (!force) {
+    const cached = getCache(currentTab);
+    if (cached && cached.length > 0) {
+      cachedData = cached;
       renderActiveTab();
-      last.textContent =
-        "Atualizado às " + fmtTime(localStorage.getItem(cacheTimeKey));
-    } catch {}
+      const ts = localStorage.getItem(cacheTimeKey);
+      if (ts && last) last.textContent = "Atualizado às " + fmtTime(ts);
+    }
   }
 
-  if (auto) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
+  if (auto && last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
 
   try {
     const resp = await fetch(endpoint);
@@ -165,48 +141,84 @@ export async function load(force = false, auto = false) {
       localStorage.setItem(cacheKey, JSON.stringify(data));
       const ts = Date.now();
       localStorage.setItem(cacheTimeKey, ts);
-
-      debugMarketStatus(data);
       renderActiveTab();
-      last.textContent = "Atualizado às " + fmtTime(ts);
+      if (last) last.textContent = "Atualizado às " + fmtTime(ts);
     }
   } catch (e) {
     console.warn("Erro ao atualizar:", e.message);
-    if (!cachedData || cachedData.length === 0)
-      tb.innerHTML =
-        "<tr><td colspan='10' class='loading'>Erro ao carregar</td></tr>";
-    last.innerHTML =
-      '<span style="color:#f66">⚠️ Falha na atualização</span>';
+    if (last) last.innerHTML = `<span style="color:#f66">⚠️ ${e.message}</span>`;
   }
 }
 
-// ======== TABS ========
+// ======== TROCA DE ABA ========
+// ======== TROCA DE ABA ========
 export function switchTab(tab) {
   currentTab = tab;
-  document
-    .querySelectorAll(".tabs button")
-    .forEach(b => b.classList.remove("active"));
-  document.getElementById("tab-" + tab).classList.add("active");
 
-  const show = tab !== "transfer";
-  document.getElementById("filters").style.display = "block";
-  document.getElementById("info-box").style.display = show ? "block" : "none";
+  // Atualiza destaque do header
+  document.querySelectorAll("#header-menu button").forEach(b => {
+    b.classList.toggle("active", b.id === "tab-" + tab);
+  });
 
-  const showBtn = show ? "inline-block" : "none";
-  ["neutro", "liq", "long", "short", "lateral", "neutral"].forEach(
-    id => (document.getElementById("btn-" + id).style.display = showBtn)
-  );
-  document.getElementById("btn-new").style.display =
-    tab === "transfer" ? "inline-block" : "none";
+  const info = document.getElementById("info-box");
+  const filters = document.getElementById("filters");
+  const tbl = document.getElementById("tbl");
+  const vol = document.getElementById("volumeContainer");
+
+  // Aba volume
+  if (tab === "volume") {
+    if (tbl) tbl.style.display = "none";
+    if (filters) filters.style.display = "none";
+    if (info) info.style.display = "none";
+    if (vol) {
+      vol.style.display = "block";
+      renderVolumeTab();
+    }
+    updateVolumeHeader();
+    return;
+  }
+
+  // Outras abas
+  if (vol) vol.style.display = "none";
+  if (tbl) tbl.style.display = "table";
+  if (info) info.style.display = tab === "transfer" ? "none" : "block";
+
+  // ======== AJUSTE: ocultar todos os botões exceto "🔄 Atualizar agora" na aba Transfer ========
+  const filterButtons = document.querySelectorAll("#filters button");
+  filterButtons.forEach(btn => {
+    if (!btn) return;
+    const texto = (btn.textContent || "").trim();
+    if (tab === "transfer") {
+      // Mostra apenas o botão de atualizar
+      if (texto.includes("🔄 Atualizar agora")) {
+        btn.style.display = "inline-block";
+      } else {
+        btn.style.display = "none";
+      }
+    } else {
+      // Outras abas (perp/spot): todos visíveis
+      btn.style.display = "inline-block";
+    }
+  });
+  // ==============================================================================================
+
+  if (filters) filters.style.display = "block";
+
+  const cached = getCache(tab);
+  if (cached && cached.length > 0) {
+    cachedData = cached;
+    renderActiveTab();
+  }
 
   load(false);
 }
 
+// ======== REFRESH MANUAL ========
 function manualRefresh() {
   load(true, true);
 }
 
-// ======== RENDERIZAÇÃO ========
+// ======== RENDER ========
 function renderActiveTab() {
   if (currentTab === "transfer") renderTransfer(cachedData);
   else renderTable(cachedData);
@@ -216,10 +228,11 @@ function renderTable(data) {
   if (!data || !Array.isArray(data)) return;
   const tb = document.querySelector("#tbl tbody"),
     th = document.querySelector("#tbl-head");
-  tb.innerHTML = "";
+  if (!tb || !th) return;
 
-  const label =
-    currentTab === "perp" ? "Open Interest 💥" : "MarketCap / Spread 💧";
+  tb.innerHTML = "";
+  const label = currentTab === "perp" ? "Open Interest 💥" : "MarketCap / Spread 💧";
+
   th.innerHTML = `<tr>
       <th>#</th>
       <th data-key="symbol">Symbol</th>
@@ -242,57 +255,37 @@ function renderTable(data) {
   if (hideNoLiquidity) filtered = filtered.filter(m => m.volumeUSD > 0);
   if (hideNeutros) filtered = filtered.filter(m => m.decision !== "neutral");
 
-  if (sortKey) {
-    filtered.sort((a, b) => {
-      const va = a[sortKey],
-        vb = b[sortKey];
-      if (va == null && vb == null) return 0;
-      if (va == null) return 1;
-      if (vb == null) return -1;
-      if (typeof va === "number" && typeof vb === "number")
-        return sortDir === "asc" ? va - vb : vb - va;
-      if (typeof va === "string" && typeof vb === "string")
-        return sortDir === "asc"
-          ? va.localeCompare(vb)
-          : vb.localeCompare(va);
-      return 0;
-    });
-  }
+  filtered.sort((a, b) => {
+    const va = a[sortKey], vb = b[sortKey];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "number" && typeof vb === "number")
+      return sortDir === "asc" ? va - vb : vb - va;
+    return sortDir === "asc"
+      ? String(va).localeCompare(String(vb))
+      : String(vb).localeCompare(String(va));
+  });
 
   filtered.forEach((m, i) => {
     const status = classifyMarket(m);
     const tr = document.createElement("tr");
-
     tr.className =
-      status === "upcoming"
-        ? "upcoming"
-        : status === "new"
-        ? "new"
-        : m.decision === "long"
-        ? "green"
-        : m.decision === "short"
-        ? "red"
-        : m.decision === "lateral"
-        ? "blue"
-        : "gray";
+      status === "upcoming" ? "upcoming" :
+      status === "new" ? "new" :
+      m.decision === "long" ? "green" :
+      m.decision === "short" ? "red" :
+      m.decision === "lateral" ? "blue" : "gray";
 
-    const statusBadge =
-      status === "upcoming"
-        ? "🕒 Em breve"
-        : status === "new"
-        ? "🆕"
-        : "";
-
+    const badge = status === "upcoming" ? "🕒 Em breve" : status === "new" ? "🆕" : "";
     const oiOrLiq =
       currentTab === "perp"
         ? usdFmt.format(m.oiUSD || 0)
-        : `${usdFmt.format(m.marketCapUSD || 0)}<br><small>${(
-            m.spreadPct || 0
-          ).toFixed(3)}% • score ${(m.liquidityScore || 0).toFixed(3)}</small>`;
+        : `${usdFmt.format(m.marketCapUSD || 0)}<br><small>${(m.spreadPct || 0).toFixed(3)}% • score ${(m.liquidityScore || 0).toFixed(3)}</small>`;
 
     tr.innerHTML = `
       <td>${i + 1}</td>
-      <td>${m.symbol} <span class="status-badge">${statusBadge}</span></td>
+      <td>${m.symbol} <span class="status-badge">${badge}</span></td>
       <td>${m.lastPrice ? "$" + m.lastPrice.toFixed(4) : "-"}</td>
       <td class="${atrClass(m.atrRel || 0)}">${m.atrRel ? (m.atrRel * 100).toFixed(3) + "%" : "-"}</td>
       <td class="${bbClass(m.bbWidth || 0)}">${m.bbWidth ? m.bbWidth.toFixed(4) : "-"}</td>
@@ -305,18 +298,58 @@ function renderTable(data) {
   });
 }
 
-// ======== TIMEFRAME HANDLER ========
-window.changeTimeframe = function(tf) {
+// ======== FILTROS ========
+window.setFilter = f => {
+  // toggle: se clicar no mesmo filtro, desativa e volta a "all"
+  if (currentFilter === f) {
+    currentFilter = "all";
+    document.querySelectorAll(".filters button").forEach(btn => btn.classList.remove("active"));
+    document.getElementById("btn-all").classList.add("active");
+  } else {
+    currentFilter = f;
+    document.querySelectorAll(".filters button").forEach(btn => btn.classList.remove("active"));
+    const btn = document.getElementById("btn-" + f);
+    if (btn) btn.classList.add("active");
+  }
+  renderTable(cachedData);
+};
+
+window.toggleLiquidity = () => {
+  hideNoLiquidity = !hideNoLiquidity;
+  const btn = document.getElementById("btn-liq");
+  if (btn) btn.textContent = hideNoLiquidity ? "Mostrar sem liquidez" : "Ocultar sem liquidez";
+  renderTable(cachedData);
+};
+
+window.toggleNeutros = () => {
+  hideNeutros = !hideNeutros;
+  const btn = document.getElementById("btn-neutro");
+  if (btn) btn.textContent = hideNeutros ? "Mostrar neutros" : "Ocultar neutros";
+  renderTable(cachedData);
+};
+
+// ======== TIMEFRAME ========
+window.changeTimeframe = tf => {
   currentTimeframe = tf;
   localStorage.setItem("selected_tf", tf);
-
   const last = document.getElementById("lastUpdate");
   if (last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
-
   load(true, true);
 };
 
-// ======== RESTAURA TIMEFRAME ========
+// ======== EVENTOS ========
+document.addEventListener("click", e => {
+  const th = e.target.closest("th[data-key]");
+  if (!th || currentTab === "transfer" || currentTab === "volume") return;
+  const key = th.getAttribute("data-key");
+  sortDir = sortKey === key && sortDir === "desc" ? "asc" : "desc";
+  sortKey = key;
+  renderTable(cachedData);
+});
+
+window.manualRefresh = manualRefresh;
+window.switchTab = switchTab;
+
 document.addEventListener("DOMContentLoaded", () => {
   const saved = localStorage.getItem("selected_tf");
   if (saved) {
@@ -324,26 +357,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const sel = document.getElementById("timeframeSelect");
     if (sel) sel.value = saved;
   }
+  switchTab("perp");
+  updateVolumeHeader();
+  setInterval(() => load(true, true), 180000);
 });
-
-// ======== EVENTOS ========
-document.addEventListener("click", e => {
-  const th = e.target.closest("th[data-key]");
-  if (!th || currentTab === "transfer") return;
-  const key = th.getAttribute("data-key");
-  if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
-  else {
-    sortKey = key;
-    sortDir = "desc";
-  }
-  renderTable(cachedData);
-});
-
-window.switchTab = switchTab;
-window.manualRefresh = manualRefresh;
-window.setFilter = setFilter;
-window.toggleLiquidity = toggleLiquidity;
-window.toggleNeutros = toggleNeutros;
-
-load(false);
-setInterval(() => load(true, true), 180000);
