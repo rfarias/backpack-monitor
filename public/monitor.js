@@ -329,12 +329,30 @@ window.toggleNeutros = () => {
 };
 
 // ======== TIMEFRAME ========
-window.changeTimeframe = tf => {
+window.changeTimeframe = async tf => {
   currentTimeframe = tf;
   localStorage.setItem("selected_tf", tf);
+
   const last = document.getElementById("lastUpdate");
-  if (last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
-  load(true, true);
+  const refreshBtn = document.querySelector("#filters button[onclick*='manualRefresh']");
+
+  // Mostra status de atualização e desativa o botão
+  if (last) last.textContent = "Atualizando...";
+  if (refreshBtn) refreshBtn.disabled = true;
+
+  // Mantém a tabela atual visível enquanto busca os novos dados
+  try {
+    await load(true, true);
+
+    // Atualiza o texto após o carregamento
+    if (last) last.textContent = "Atualizado às " + fmtTime(Date.now());
+  } catch (e) {
+    if (last) last.textContent = "Erro ao atualizar";
+    console.warn("Erro ao atualizar timeframe:", e.message);
+  }
+
+  // Reabilita o botão
+  if (refreshBtn) refreshBtn.disabled = false;
 };
 
 // ======== EVENTOS ========
