@@ -111,7 +111,6 @@ export default async function handler(req, res) {
           const kl = await fetchKlines(m.symbol, tf, 200);
 
           if (kl.length > 0 && lastPrice > 0) {
-            // Filtra candles com valores válidos
             const c = kl.map(k => k.close).filter(v => v > 0);
             const h = kl.map(k => k.high).filter(v => v > 0);
             const l = kl.map(k => k.low).filter(v => v > 0);
@@ -167,6 +166,12 @@ export default async function handler(req, res) {
 
     await Promise.all(active);
     cache = { ts: now, data: results };
+
+    // 🚫 Força não cachear no Vercel
+    res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma","no-cache");
+    res.setHeader("Expires","0");
+
     res.status(200).json(results);
   } catch (e) {
     console.error("Erro geral /api/spot:", e.message);

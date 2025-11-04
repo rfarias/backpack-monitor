@@ -99,7 +99,7 @@ export default async function handler(req,res){
     for(const m of perpMarkets){
       const run=async()=>{
         let lastPrice=0,volumeUSD=0,oiUSD=0,atrRel=0,rsi=0,bbWidth=0,ema20=0;
-        let decision="aguardando",score=0,isNew=false;
+        let decision="aguardando",score=0;
         try{
           const tickerResp=await fetch(`${BASE_URL}/ticker?symbol=${m.symbol}`);
           const ticker=tickerResp.ok?await tickerResp.json():{};
@@ -136,16 +136,11 @@ export default async function handler(req,res){
           }
         }catch(e){console.log(`⚠️ Erro ${m.symbol}: ${e.message}`);}
 
-        // === Força decisão coerente antes de enviar ===
-        if(
-          !atrRel || !bbWidth || !rsi ||
-          isNaN(atrRel) || isNaN(bbWidth) || isNaN(rsi)
-        ){
+        if(!atrRel || !bbWidth || !rsi || isNaN(atrRel) || isNaN(bbWidth) || isNaN(rsi)){
           decision="aguardando";
           score=0;
         }
 
-        // === Envia resultado final coerente ===
         results.push({
           symbol:m.symbol,
           visible:m.visible,
@@ -158,16 +153,22 @@ export default async function handler(req,res){
           volumeUSD,
           oiUSD,
           decision,
-          score,
-          isNew
+          score
         });
       };
 
       active.push(run());
       if(active.length>=MAX_CONCURRENT) await Promise.all(active.splice(0,MAX_CONCURRENT));
     }
+
     await Promise.all(active);
     cache={ts:now,data:results};
+
+    // 🚫 Força não cachear no Vercel
+    res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma","no-cache");
+    res.setHeader("Expires","0");
+
     res.status(200).json(results);
   }catch(e){
     console.error("Erro geral /api/data:",e.message);
