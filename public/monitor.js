@@ -1,5 +1,6 @@
 // === monitor.js ===
 // Corrigido: Volume 24h ativo, botões toggle, ocultação correta em Transfers e cache suave.
+// Ajuste: temporizador sincronizado — seletor desbloqueia exatamente quando a barra termina (CSS separado).
 
 import { renderTransfer } from "./monitorTransfer.js";
 import { renderVolumeTab } from "./monitorVolume.js";
@@ -14,7 +15,8 @@ let currentTab = "perp",
   cachedData = [],
   currentTimeframe = "3m", // 🕒 padrão
   isLoading = false,
-  lastTfChange = 0;
+  lastTfChange = 0,
+  tfCooldownTimer = null;
 
 const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -119,7 +121,6 @@ export async function load(force = false, auto = false) {
   const cacheKey = "cache_" + currentTab;
   const cacheTimeKey = cacheKey + "_time";
 
-  // Usa cache imediatamente
   if (!force) {
     const cached = getCache(currentTab);
     if (cached && cached.length > 0) {
@@ -321,6 +322,37 @@ window.toggleNeutros = () => {
   renderTable(cachedData);
 };
 
+// ======== TEMPORIZADOR ========
+function startTfCooldown(seconds, tfSelect) {
+  const sel = tfSelect || document.getElementById("timeframeSelect");
+  if (!sel) return;
+  const old = document.getElementById("tfCooldown");
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+
+  const wrap = document.createElement("span");
+  wrap.id = "tfCooldown";
+  wrap.className = "tf-cooldown-wrap";
+
+  const bar = document.createElement("span");
+  bar.className = "tf-cooldown-bar";
+  wrap.appendChild(bar);
+  sel.parentNode.insertBefore(wrap, sel.nextSibling);
+
+  let remaining = seconds;
+  if (tfCooldownTimer) clearInterval(tfCooldownTimer);
+
+  tfCooldownTimer = setInterval(() => {
+    remaining -= 1;
+    bar.style.width = Math.max(0, (remaining / seconds) * 100) + "%";
+    if (remaining <= 0) {
+      clearInterval(tfCooldownTimer);
+      tfCooldownTimer = null;
+      if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      sel.disabled = false; // 🔓 desbloqueia o seletor exatamente no final
+    }
+  }, 1000);
+}
+
 // ======== TIMEFRAME ========
 window.changeTimeframe = async tf => {
   const now = Date.now();
@@ -343,7 +375,10 @@ window.changeTimeframe = async tf => {
 
   if (last) last.textContent = "Atualizando...";
   if (refreshBtn) refreshBtn.disabled = true;
-  if (tfSelect) tfSelect.disabled = true;
+  if (tfSelect) {
+    tfSelect.disabled = true;
+    startTfCooldown(30, tfSelect);
+  }
 
   try {
     isLoading = true;
@@ -353,9 +388,6 @@ window.changeTimeframe = async tf => {
     if (last) last.textContent = "Erro ao atualizar";
     console.warn("Erro ao atualizar timeframe:", e.message);
   } finally {
-    setTimeout(() => {
-      if (tfSelect) tfSelect.disabled = false;
-    }, 30000);
     if (refreshBtn) refreshBtn.disabled = false;
     isLoading = false;
   }
