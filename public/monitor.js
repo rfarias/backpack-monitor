@@ -80,7 +80,7 @@ async function updateVolumeHeader() {
   if (volTxt) volTxt.textContent = "Volume 24h — carregando...";
 
   try {
-    const res = await fetch("/api/volume?days=1");
+    const res = await fetch("/api/volume?days=1&_t=" + Date.now(), { cache: "no-store" }); // ✅ correção Vercel
     if (!res.ok) throw new Error("Falha ao buscar volume");
     const json = await res.json();
     const data = json.data || [];
@@ -111,9 +111,9 @@ export async function load(force = false, auto = false) {
   const id = ++loadId;
   const endpoint =
     currentTab === "perp"
-      ? `/api/data?tf=${currentTimeframe}`
+      ? `/api/data?tf=${currentTimeframe}&_t=${Date.now()}`
       : currentTab === "spot"
-      ? `/api/spot?tf=${currentTimeframe}`
+      ? `/api/spot?tf=${currentTimeframe}&_t=${Date.now()}`
       : "/api/transfer";
 
   const tb = document.querySelector("#tbl tbody");
@@ -134,7 +134,7 @@ export async function load(force = false, auto = false) {
   if (auto && last) last.innerHTML = '<span class="updating">🕒 Atualizando...</span>';
 
   try {
-    const resp = await fetch(endpoint);
+    const resp = await fetch(endpoint, { cache: "no-store" }); // ✅ correção Vercel
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
     if (id !== loadId) return;
@@ -419,5 +419,5 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   switchTab("perp");
   updateVolumeHeader();
-  setInterval(() => load(true, true), 180000);
+  setInterval(() => load(true, true), 90000);
 });
