@@ -287,7 +287,11 @@ function renderTable(data) {
       <td class="${rsiClass(m.rsi || 0)}">${m.rsi ? m.rsi.toFixed(1) : "-"}</td>
       <td>${usdFmt.format(m.volumeUSD || 0)}</td>
       <td>${oiOrLiq}</td>
-      <td>${(m.decision || "aguardando").toUpperCase()}</td>
+      <td>${
+      (m.atrRel && m.bbWidth && m.rsi)
+        ? (m.decision || "aguardando").toUpperCase()
+        : "AGUARDANDO"
+      }</td>
       <td>${m.score || 0}</td>`;
     tb.appendChild(tr);
   });

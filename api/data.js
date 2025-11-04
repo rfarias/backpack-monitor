@@ -1,4 +1,3 @@
-// /api/data.js
 import fetch from "node-fetch";
 
 const BASE_URL = "https://api.backpack.exchange/api/v1";
@@ -107,26 +106,63 @@ export default async function handler(req,res){
           lastPrice=+ticker.lastPrice||0;
           volumeUSD=(+ticker.volume||0)*lastPrice;
           oiUSD=((oiMap[m.symbol]?.openInterest)||0)*lastPrice;
+
           const kl=await fetchKlines(m.symbol,tf,100);
           if(kl.length>0){
-            const closes=kl.map(k=>k.close),highs=kl.map(k=>k.high),lows=kl.map(k=>k.low);
-            const atr=computeATR(highs,lows,closes);
-            atrRel=lastPrice?atr/lastPrice:0;
-            rsi=computeRSI(closes);
-            bbWidth=computeBollinger(closes).width;
-            ema20=computeEMA(closes);
+            const closes=kl.map(k=>k.close).filter(v=>v>0);
+            const highs=kl.map(k=>k.high).filter(v=>v>0);
+            const lows=kl.map(k=>k.low).filter(v=>v>0);
 
-            if(rsi<30&&lastPrice>ema20){decision="long";score=2;}
-            else if(rsi>70&&lastPrice<ema20){decision="short";score=-2;}
-            else if(atrRel<th.atrNeutral&&bbWidth<th.bbNeutral){decision="lateral";score=1;}
-            else{decision="neutral";score=0;}
+            if(closes.length>=10){
+              const atr=computeATR(highs,lows,closes);
+              atrRel=lastPrice?atr/lastPrice:0;
+              rsi=computeRSI(closes);
+              bbWidth=computeBollinger(closes).width;
+              ema20=computeEMA(closes);
+
+              const valid=[atrRel,bbWidth,rsi].every(v=>typeof v==="number"&&!isNaN(v));
+
+              if(valid){
+                if(rsi<30&&lastPrice>ema20){decision="long";score=2;}
+                else if(rsi>70&&lastPrice<ema20){decision="short";score=-2;}
+                else if(atrRel<th.atrNeutral&&bbWidth<th.bbNeutral){decision="lateral";score=1;}
+                else{decision="neutral";score=0;}
+              }else{
+                decision="aguardando";score=0;
+              }
+            }else{
+              decision="aguardando";score=0;
+            }
           }
         }catch(e){console.log(`⚠️ Erro ${m.symbol}: ${e.message}`);}
+
+        // === Força decisão coerente antes de enviar ===
+        if(
+          !atrRel || !bbWidth || !rsi ||
+          isNaN(atrRel) || isNaN(bbWidth) || isNaN(rsi)
+        ){
+          decision="aguardando";
+          score=0;
+        }
+
+        // === Envia resultado final coerente ===
         results.push({
-          symbol:m.symbol,visible:m.visible,orderBookState:m.orderBookState,
-          lastPrice,atrRel,rsi,bbWidth,ema20,volumeUSD,oiUSD,decision,score,isNew
+          symbol:m.symbol,
+          visible:m.visible,
+          orderBookState:m.orderBookState,
+          lastPrice,
+          atrRel:atrRel||null,
+          rsi:rsi||null,
+          bbWidth:bbWidth||null,
+          ema20:ema20||null,
+          volumeUSD,
+          oiUSD,
+          decision,
+          score,
+          isNew
         });
       };
+
       active.push(run());
       if(active.length>=MAX_CONCURRENT) await Promise.all(active.splice(0,MAX_CONCURRENT));
     }
