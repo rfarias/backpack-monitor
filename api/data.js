@@ -1,3 +1,4 @@
+export const config = { runtime: "nodejs" };
 import fetch from "node-fetch";
 
 const BASE_URL = "https://api.backpack.exchange/api/v1";
@@ -82,8 +83,9 @@ export default async function handler(req,res){
     const th=getThresholdsByTimeframe(tf);
     console.log(`[INFO] /api/data chamado com timeframe=${tf}`);
 
-    if(now-cache.ts<UPDATE_INTERVAL&&cache.data.length>0)
+    if (now - cache.ts < UPDATE_INTERVAL && cache.data.length > 0 && cache.tf === tf)
       return res.status(200).json(cache.data);
+
 
     const [marketsResp,oiResp]=await Promise.all([
       fetch(`${BASE_URL}/markets`),
